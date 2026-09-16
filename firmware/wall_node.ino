@@ -242,7 +242,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 (function(){
   var POLL_MS=2000, STALE_MS=15000;
   function fmtAge(ms){ if(ms==null) return '-'; if(ms<1000) return 'just now'; var s=Math.round(ms/1000); if(s<60) return s+'s ago'; return Math.round(s/60)+'m ago'; }
-  function statusFromMsg(msg){ if(msg.ageMs>STALE_MS) return 'OFFLINE'; var rs=(msg.payload&&msg.payload.riskState)||''; if(msg.msgType==='DISTRESS'||rs==='FALL_SUSPECTED') return 'FALL_SUSPECTED'; return 'OK'; }
+  function statusFromMsg(msg){ if(msg.ageMs>STALE_MS) return 'OFFLINE'; if(msg.msgType==='DISTRESS'){ return (msg.payload&&msg.payload.riskState)||'ALERT'; } return 'OK'; }
+  function isAlertStatus(status){ return status!=='OK' && status!=='OFFLINE'; }
   function setFlag(state,text){ var f=document.getElementById('connection-flag'); f.className='status-flag '+state; document.getElementById('connection-flag-text').textContent=text; }
 
   function renderRoster(workersObj){
@@ -251,9 +252,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     if(ids.length===0){ grid.innerHTML='<div class="card" style="grid-column:1/-1;"><div class="empty-state">Waiting for a worker message...</div></div>'; return {alertNames:[]}; }
     grid.innerHTML=''; var alertNames=[];
     ids.forEach(function(id){
-      var msg=workersObj[id]; var status=statusFromMsg(msg);
-      if(status==='FALL_SUSPECTED') alertNames.push(id);
-      var pillColor= status==='FALL_SUSPECTED' ? 'var(--critical)' : (status==='OFFLINE' ? 'var(--offline)' : 'var(--good)');
+      var msg=workersObj[id]; var status=statusFromMsg(msg); var alerting=isAlertStatus(status);
+      if(alerting) alertNames.push(id+' ('+status.replace(/_/g,' ')+')');
+      var pillColor= alerting ? 'var(--critical)' : (status==='OFFLINE' ? 'var(--offline)' : 'var(--good)');
       var payload=msg.payload||{};
       var motion= payload.motionEnergy!=null ? payload.motionEnergy.toFixed(2)+' g' : '-';
       var rssi= msg.espnowRssi!=null ? msg.espnowRssi+' dBm' : '-';
@@ -261,11 +262,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       var secsInactive= payload.secondsInactive!=null?payload.secondsInactive:payload.secondsSinceMotion;
       var timerLabel= secsInactive!=null? (Math.round(secsInactive)+'s / 20s') : '- / 20s';
       var fillPct= secsInactive!=null? Math.min(100, Math.round((secsInactive/20)*100)) : 0;
-      var fillColor= status==='FALL_SUSPECTED' ? 'var(--critical)' : 'var(--accent)';
+      var fillColor= alerting ? 'var(--critical)' : 'var(--accent)';
       var card=document.createElement('div');
       card.className='worker-card'; card.style.opacity= status==='OFFLINE'?'0.7':'1';
       card.innerHTML=
-        '<div class="worker-head"><strong>'+id+'</strong><span class="status-pill" style="background:'+pillColor+';">'+status.replace('_',' ')+'</span></div>'+
+        '<div class="worker-head"><strong>'+id+'</strong><span class="status-pill" style="background:'+pillColor+';">'+status.replace(/_/g,' ')+'</span></div>'+
         '<div class="worker-metrics">'+
           '<div><div class="metric-label">Motion Energy</div><div class="mono">'+motion+'</div></div>'+
           '<div><div class="metric-label">RSSI</div><div class="mono">'+rssi+'</div></div>'+
@@ -313,7 +314,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       var banner=document.getElementById('alert-banner');
       banner.classList.toggle('visible', summary.alertNames.length>0);
       if(summary.alertNames.length>0){
-        document.getElementById('alert-text').textContent='FALL SUSPECTED - Worker '+summary.alertNames.join(', ')+' - immediate response required';
+        document.getElementById('alert-text').textContent='ALERT - '+summary.alertNames.join(', ')+' - immediate response required';
       }
 
       var newestAgeMs=null;

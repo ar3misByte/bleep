@@ -37,6 +37,18 @@ const uint8_t WALL_MAC[] = {
 };
 
 
+// -------------------- SOS BUTTON -----------------------------
+//
+// Wire a momentary pushbutton between this pin and GND -- the
+// internal pull-up means the pin reads HIGH when not pressed and
+// LOW when pressed, no external resistor needed. Two behaviors on
+// one button: pressed during normal monitoring, it sends an
+// immediate manual SOS distress packet; pressed while FALL_CONFIRMED
+// is latched, it acknowledges/clears the alarm and sends an updated
+// STATUS right away.
+const int SOS_BUTTON_PIN = 15;
+const unsigned long BUTTON_DEBOUNCE_MS = 50;
+
 // -------------------- MPU6050 -------------------------------
 
 const int SDA_PIN = 21;
@@ -188,6 +200,15 @@ unsigned long confirmationStartTime = 0;
 // ============================================================
 
 int impactSamples = 0;
+
+
+// ============================================================
+// SOS BUTTON STATE
+// ============================================================
+
+bool buttonLastRaw = HIGH;
+bool buttonStable = HIGH;
+unsigned long buttonLastChangeMs = 0;
 
 
 // ============================================================
@@ -489,6 +510,109 @@ void triggerFall() {
 
 
 // ============================================================
+// MANUAL SOS (button press during normal monitoring)
+// ============================================================
+//
+// Reuses the same "latched alarm" behavior as an automatic fall
+// (state = FALL_CONFIRMED, LED/buzzer on, routine STATUS paused) but
+// with riskState/hazardType marked "SOS" instead of "FALL_SUSPECTED"
+// so the dashboard can tell a worker-triggered SOS apart from an
+// automatically detected fall -- they're both genuine distress, but
+// not the same event.
+
+void triggerSOS() {
+
+  state = FALL_CONFIRMED;
+
+  motionEnergyAtTrigger = motionEnergy;
+
+  digitalWrite(LED_PIN, HIGH);
+  digitalWrite(BUZZER_PIN, HIGH);
+
+  Serial.println();
+  Serial.println();
+  Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+  Serial.println("        !!! SOS BUTTON TRIGGERED !!!");
+  Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+  Serial.println("LED    : ON");
+  Serial.println("BUZZER : ON");
+
+  memset(&packet, 0, sizeof(packet));
+  strncpy(packet.workerId, WORKER_ID, sizeof(packet.workerId) - 1);
+  packet.msgType = 1;
+  strncpy(packet.riskState, "SOS", sizeof(packet.riskState) - 1);
+  strncpy(packet.hazardType, "SOS_BUTTON", sizeof(packet.hazardType) - 1);
+  packet.motionEnergy = motionEnergy;
+  packet.secondsSinceMotion = (millis() - impactTime) / 1000.0;
+  packet.motionEnergyAtTrigger = motionEnergyAtTrigger;
+  packet.seq = sequenceNumber++;
+
+  Serial.println(">>> IMMEDIATE SOS PACKET");
+  printPacket();
+
+  esp_err_t result = esp_now_send(WALL_MAC, (uint8_t*)&packet, sizeof(packet));
+  if (result == ESP_OK) {
+    Serial.println(">>> SOS PACKET HANDED TO ESP-NOW");
+  } else {
+    Serial.print(">>> SOS SEND ERROR: ");
+    Serial.println(result);
+  }
+
+  Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+}
+
+
+// ============================================================
+// SOS BUTTON HANDLING
+// ============================================================
+//
+// One button, two jobs depending on current state:
+//  - NORMAL/SETTLING/CONFIRMING -> pressing it raises a manual SOS.
+//  - FALL_CONFIRMED -> pressing it acknowledges/clears the alarm and
+//    sends an updated STATUS immediately. Without this there is no
+//    way to ever see an update after a fall: routine STATUS sending
+//    is deliberately paused while FALL_CONFIRMED (see loop()), so
+//    the dashboard would otherwise be stuck showing the original
+//    distress packet forever.
+
+void onButtonPressed() {
+  Serial.println();
+  Serial.println(">>> SOS BUTTON PRESSED");
+
+  if (state == FALL_CONFIRMED) {
+    Serial.println(">>> Acknowledging and clearing FALL_CONFIRMED");
+    state = NORMAL;
+    impactSamples = 0;
+    impactTime = millis();
+    confirmationStartTime = 0;
+    digitalWrite(LED_PIN, LOW);
+    digitalWrite(BUZZER_PIN, LOW);
+    sendStatusPacket(); // immediate update -- don't wait for the next STATUS_INTERVAL_MS tick
+    return;
+  }
+
+  triggerSOS();
+}
+
+void pollButton() {
+  unsigned long now = millis();
+  bool raw = digitalRead(SOS_BUTTON_PIN);
+
+  if (raw != buttonLastRaw) {
+    buttonLastRaw = raw;
+    buttonLastChangeMs = now;
+  }
+
+  if (now - buttonLastChangeMs >= BUTTON_DEBOUNCE_MS && buttonStable != buttonLastRaw) {
+    buttonStable = buttonLastRaw;
+    if (buttonStable == LOW) {
+      onButtonPressed();
+    }
+  }
+}
+
+
+// ============================================================
 // RESET POSSIBLE FALL
 // ============================================================
 
@@ -716,6 +840,16 @@ void setup() {
   digitalWrite(
     BUZZER_PIN,
     LOW
+  );
+
+
+  // ==========================================================
+  // SOS BUTTON
+  // ==========================================================
+
+  pinMode(
+    SOS_BUTTON_PIN,
+    INPUT_PULLUP
   );
 
 
@@ -998,6 +1132,14 @@ void loop() {
 
   unsigned long now =
     millis();
+
+
+  // ==========================================================
+  // 0. SOS BUTTON -- polled every loop iteration, not gated by
+  //    SENSOR_INTERVAL_MS, so a press is caught promptly.
+  // ==========================================================
+
+  pollButton();
 
 
   // ==========================================================

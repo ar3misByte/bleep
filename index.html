@@ -191,11 +191,21 @@
     return Math.round(s / 60) + 'm ago';
   }
 
+  // Returns 'OK', 'OFFLINE', or the actual riskState text for any
+  // DISTRESS message (e.g. 'FALL_SUSPECTED', 'SOS') — a manual SOS
+  // button press and an automatically detected fall are both genuine
+  // distress, but not the same event, so the label shouldn't lie and
+  // call every DISTRESS a fall.
   function statusFromWorkerMsg(msg) {
     if (msg.ageMs > STALE_MS) return 'OFFLINE';
-    var riskState = (msg.payload && msg.payload.riskState) || '';
-    if (msg.msgType === 'DISTRESS' || riskState === 'FALL_SUSPECTED') return 'FALL_SUSPECTED';
+    if (msg.msgType === 'DISTRESS') {
+      return (msg.payload && msg.payload.riskState) || 'ALERT';
+    }
     return 'OK';
+  }
+
+  function isAlertStatus(status) {
+    return status !== 'OK' && status !== 'OFFLINE';
   }
 
   function setConnectionFlag(state, text) {
@@ -224,10 +234,11 @@
     ids.forEach(function (id) {
       var msg = workersObj[id];
       var status = statusFromWorkerMsg(msg);
-      if (status === 'FALL_SUSPECTED') alertNames.push(id);
+      var alerting = isAlertStatus(status);
+      if (alerting) alertNames.push(id + ' (' + status.replace(/_/g, ' ') + ')');
 
-      var pillColor = status === 'FALL_SUSPECTED' ? 'var(--critical)' : (status === 'OFFLINE' ? 'var(--offline)' : 'var(--good)');
-      var borderColor = status === 'FALL_SUSPECTED' ? '#edb3b3' : '#e2e6ea';
+      var pillColor = alerting ? 'var(--critical)' : (status === 'OFFLINE' ? 'var(--offline)' : 'var(--good)');
+      var borderColor = alerting ? '#edb3b3' : '#e2e6ea';
       var payload = msg.payload || {};
       var motion = payload.motionEnergy != null ? payload.motionEnergy.toFixed(2) + ' g' : '—';
       var rssi = msg.espnowRssi != null ? msg.espnowRssi + ' dBm' : '—';
@@ -236,8 +247,8 @@
       var secsInactive = payload.secondsInactive != null ? payload.secondsInactive : payload.secondsSinceMotion;
       var timerLabel = secsInactive != null ? (Math.round(secsInactive) + 's / 20s') : '— / 20s';
       var fillPct = secsInactive != null ? Math.min(100, Math.round((secsInactive / 20) * 100)) : 0;
-      var fillColor = status === 'FALL_SUSPECTED' ? 'var(--critical)' : 'var(--accent)';
-      var trackColor = status === 'FALL_SUSPECTED' ? '#f1d4d4' : '#e2e6ea';
+      var fillColor = alerting ? 'var(--critical)' : 'var(--accent)';
+      var trackColor = alerting ? '#f1d4d4' : '#e2e6ea';
 
       var card = document.createElement('div');
       card.className = 'worker-card';
@@ -246,7 +257,7 @@
       card.innerHTML =
         '<div class="worker-head">' +
           '<span class="heading" style="font-size:15px; font-weight:700;">' + id + '</span>' +
-          '<span class="status-pill" style="background:' + pillColor + ';">' + status.replace('_', ' ') + '</span>' +
+          '<span class="status-pill" style="background:' + pillColor + ';">' + status.replace(/_/g, ' ') + '</span>' +
         '</div>' +
         '<div class="worker-metrics">' +
           '<div><div class="metric-label">Motion Energy</div><div class="mono metric-value">' + motion + '</div></div>' +
@@ -333,7 +344,7 @@
       banner.classList.toggle('visible', summary.alertNames.length > 0);
       if (summary.alertNames.length > 0) {
         document.getElementById('alert-text').textContent =
-          'FALL SUSPECTED — Worker ' + summary.alertNames.join(', ') + ' — immediate response required';
+          'ALERT — ' + summary.alertNames.join(', ') + ' — immediate response required';
       }
 
       var newestAgeMs = null;
