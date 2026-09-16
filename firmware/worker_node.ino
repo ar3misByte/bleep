@@ -69,11 +69,11 @@ const unsigned long SENSOR_INTERVAL_MS = 100;
 
 // -------------------- STATUS TRANSMISSION --------------------
 
-// 10 seconds. Stays comfortably under the dashboard's 15s
-// offline-staleness threshold (see dashboard_features.md) — don't
-// push this much higher without also raising that threshold, or a
-// single missed send will show the worker as OFFLINE.
-const unsigned long STATUS_INTERVAL_MS = 10000;
+// 2 seconds -- matches the original protocol recommendation
+// (wifi_json_protocol.md) so the dashboard's motion/RSSI/inactivity
+// readings feel live rather than updating in 10s jumps. Comfortably
+// under the dashboard's 15s offline-staleness threshold either way.
+const unsigned long STATUS_INTERVAL_MS = 2000;
 
 
 // ============================================================
@@ -193,6 +193,14 @@ unsigned long lastDebugTime = 0;
 unsigned long impactTime = 0;
 
 unsigned long confirmationStartTime = 0;
+
+// Time of the last sample where the worker was actually moving
+// (motionEnergy above LOW_MOTION_THRESHOLD) -- this, not impactTime,
+// is what "seconds since motion" should be measured from. impactTime
+// only updates on a hard jolt (>= IMPACT_THRESHOLD), so using it for
+// routine inactivity reporting meant the number climbed forever
+// during ordinary handling, never resetting on real movement.
+unsigned long lastMotionTime = 0;
 
 
 // ============================================================
@@ -326,9 +334,10 @@ void sendStatusPacket() {
     motionEnergy;
 
 
-  // Time since the last detected impact event.
+  // Time since the worker last actually moved -- not since the last
+  // hard impact, which could be a long time ago or never.
   packet.secondsSinceMotion =
-    (millis() - impactTime) / 1000.0;
+    (millis() - lastMotionTime) / 1000.0;
 
 
   packet.motionEnergyAtTrigger =
@@ -409,6 +418,10 @@ void triggerFall() {
 
   Serial.println("LED    : ON");
   Serial.println("BUZZER : ON");
+  Serial.print("LED_PIN readback: ");
+  Serial.println(digitalRead(LED_PIN));
+  Serial.print("BUZZER_PIN readback: ");
+  Serial.println(digitalRead(BUZZER_PIN));
 
 
   // ==========================================================
@@ -451,7 +464,7 @@ void triggerFall() {
 
 
   packet.secondsSinceMotion =
-    (millis() - impactTime) / 1000.0;
+    (millis() - lastMotionTime) / 1000.0;
 
 
   packet.motionEnergyAtTrigger =
@@ -536,6 +549,10 @@ void triggerSOS() {
   Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   Serial.println("LED    : ON");
   Serial.println("BUZZER : ON");
+  Serial.print("LED_PIN readback: ");
+  Serial.println(digitalRead(LED_PIN));
+  Serial.print("BUZZER_PIN readback: ");
+  Serial.println(digitalRead(BUZZER_PIN));
 
   memset(&packet, 0, sizeof(packet));
   strncpy(packet.workerId, WORKER_ID, sizeof(packet.workerId) - 1);
@@ -543,7 +560,7 @@ void triggerSOS() {
   strncpy(packet.riskState, "SOS", sizeof(packet.riskState) - 1);
   strncpy(packet.hazardType, "SOS_BUTTON", sizeof(packet.hazardType) - 1);
   packet.motionEnergy = motionEnergy;
-  packet.secondsSinceMotion = (millis() - impactTime) / 1000.0;
+  packet.secondsSinceMotion = (millis() - lastMotionTime) / 1000.0;
   packet.motionEnergyAtTrigger = motionEnergyAtTrigger;
   packet.seq = sequenceNumber++;
 
@@ -555,6 +572,62 @@ void triggerSOS() {
     Serial.println(">>> SOS PACKET HANDED TO ESP-NOW");
   } else {
     Serial.print(">>> SOS SEND ERROR: ");
+    Serial.println(result);
+  }
+
+  Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+}
+
+
+// ============================================================
+// PROLONGED INACTIVITY (no impact required)
+// ============================================================
+//
+// Same latched-alarm behavior as triggerFall(), but riskState/
+// hazardType marked "INACTIVITY" -- this fires purely from the
+// worker not moving for FALL_CONFIRMATION_TIME_MS, with no impact
+// ever detected, so the dashboard can tell it apart from an actual
+// impact-based fall.
+
+void triggerInactivityAlert() {
+
+  state = FALL_CONFIRMED;
+
+  motionEnergyAtTrigger = motionEnergy;
+
+  digitalWrite(LED_PIN, HIGH);
+  digitalWrite(BUZZER_PIN, HIGH);
+
+  Serial.println();
+  Serial.println();
+  Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+  Serial.println("     !!! PROLONGED INACTIVITY !!!");
+  Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+  Serial.println("LED    : ON");
+  Serial.println("BUZZER : ON");
+  Serial.print("LED_PIN readback: ");
+  Serial.println(digitalRead(LED_PIN));
+  Serial.print("BUZZER_PIN readback: ");
+  Serial.println(digitalRead(BUZZER_PIN));
+
+  memset(&packet, 0, sizeof(packet));
+  strncpy(packet.workerId, WORKER_ID, sizeof(packet.workerId) - 1);
+  packet.msgType = 1;
+  strncpy(packet.riskState, "INACTIVITY", sizeof(packet.riskState) - 1);
+  strncpy(packet.hazardType, "INACTIVITY", sizeof(packet.hazardType) - 1);
+  packet.motionEnergy = motionEnergy;
+  packet.secondsSinceMotion = (millis() - lastMotionTime) / 1000.0;
+  packet.motionEnergyAtTrigger = motionEnergyAtTrigger;
+  packet.seq = sequenceNumber++;
+
+  Serial.println(">>> IMMEDIATE INACTIVITY PACKET");
+  printPacket();
+
+  esp_err_t result = esp_now_send(WALL_MAC, (uint8_t*)&packet, sizeof(packet));
+  if (result == ESP_OK) {
+    Serial.println(">>> INACTIVITY PACKET HANDED TO ESP-NOW");
+  } else {
+    Serial.print(">>> INACTIVITY SEND ERROR: ");
     Serial.println(result);
   }
 
@@ -852,6 +925,9 @@ void setup() {
     INPUT_PULLUP
   );
 
+  Serial.print("SOS button initial read (should be HIGH if unpressed and wired correctly): ");
+  Serial.println(digitalRead(SOS_BUTTON_PIN));
+
 
   // ==========================================================
   // I2C
@@ -1066,6 +1142,9 @@ void setup() {
   impactTime =
     millis();
 
+  lastMotionTime =
+    millis();
+
 
   // ==========================================================
   // READY
@@ -1159,12 +1238,49 @@ void loop() {
 
 
     // ========================================================
+    // TRACK LAST REAL MOTION -- independent of state, this is
+    // what "seconds since motion" is measured from everywhere else
+    // in this file.
+    // ========================================================
+
+    if (
+      motionEnergy >
+      LOW_MOTION_THRESHOLD
+    ) {
+
+      lastMotionTime =
+        now;
+    }
+
+
+    // ========================================================
     // NORMAL
     // ========================================================
 
     if (
       state == NORMAL
     ) {
+
+      // Prolonged inactivity on its own -- no impact required.
+      // This is the other half of "Fall & Inactivity Detection":
+      // a worker who simply hasn't moved for the full confirmation
+      // window is worth flagging even if nothing ever hit
+      // IMPACT_THRESHOLD. Previously this file only ever checked
+      // inactivity AFTER an impact, so standing still alone did
+      // nothing at all.
+      if (
+        now - lastMotionTime >=
+        FALL_CONFIRMATION_TIME_MS
+      ) {
+
+        Serial.println();
+        Serial.println(
+          ">>> PROLONGED INACTIVITY DETECTED (no impact)"
+        );
+
+        triggerInactivityAlert();
+      }
+
 
       if (
         accelerationMagnitude >=

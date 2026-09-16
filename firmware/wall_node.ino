@@ -260,6 +260,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       var rssi= msg.espnowRssi!=null ? msg.espnowRssi+' dBm' : '-';
       var seq= msg.seq!=null ? msg.seq : '-';
       var secsInactive= payload.secondsInactive!=null?payload.secondsInactive:payload.secondsSinceMotion;
+      if(secsInactive!=null && status==='OK'){ secsInactive = secsInactive + (msg.ageMs/1000); }
       var timerLabel= secsInactive!=null? (Math.round(secsInactive)+'s / 20s') : '- / 20s';
       var fillPct= secsInactive!=null? Math.min(100, Math.round((secsInactive/20)*100)) : 0;
       var fillColor= alerting ? 'var(--critical)' : 'var(--accent)';

@@ -245,6 +245,14 @@
       var battery = payload.battery != null ? payload.battery : '—'; // always null today — no battery sensor on worker_node.ino yet
       var seq = msg.seq != null ? msg.seq : '—';
       var secsInactive = payload.secondsInactive != null ? payload.secondsInactive : payload.secondsSinceMotion;
+      // For a healthy worker this keeps climbing in real time even
+      // between polls: the worker's own value was accurate as of
+      // ageMs ago, so project it forward by that much. Frozen alert
+      // snapshots (SOS/fall/inactivity) are historical facts about
+      // the triggering moment and should NOT keep climbing.
+      if (secsInactive != null && status === 'OK') {
+        secsInactive = secsInactive + (msg.ageMs / 1000);
+      }
       var timerLabel = secsInactive != null ? (Math.round(secsInactive) + 's / 20s') : '— / 20s';
       var fillPct = secsInactive != null ? Math.min(100, Math.round((secsInactive / 20) * 100)) : 0;
       var fillColor = alerting ? 'var(--critical)' : 'var(--accent)';
