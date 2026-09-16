@@ -42,9 +42,16 @@ bool wifiIsUp() {
 }
 
 // Sends one JSON document to the dashboard. Never blocks on a dead
-// WiFi link — callers decide whether/how to retry.
-bool sendToDashboard(JsonDocument& doc) {
-  if (!wifiIsUp()) return false;
+// WiFi link — callers decide whether/how to retry. Returns the HTTP
+// status code (e.g. 200), or a negative HTTPClient error code if the
+// request itself never completed (bad URL, connection refused,
+// timeout, etc.) — logging this is what makes "nothing shows up on
+// the dashboard" debuggable instead of silent.
+int sendToDashboard(JsonDocument& doc) {
+  if (!wifiIsUp()) {
+    Serial.println("[HTTP] skipped — WiFi not connected");
+    return -1000;
+  }
 
   HTTPClient http;
   http.begin(DASHBOARD_URL);
@@ -55,7 +62,14 @@ bool sendToDashboard(JsonDocument& doc) {
   int code = http.POST(body);
   http.end(); // always release the connection, success or failure
 
-  return code == 200;
+  if (code > 0) {
+    Serial.printf("[HTTP] POST %s -> %d\n", DASHBOARD_URL, code);
+  } else {
+    Serial.printf("[HTTP] POST %s FAILED, client error %d (%s)\n",
+                  DASHBOARD_URL, code, HTTPClient::errorToString(code).c_str());
+  }
+
+  return code;
 }
 
 void sendStatus(const WorkerPacket& pkt, int rssi, bool haveRssi) {
@@ -107,7 +121,7 @@ void sendDistress(const WorkerPacket& pkt, int rssi, bool haveRssi) {
   // "no blocking delay()" rule: it's on the DISTRESS path only, not
   // the routine ESP-NOW receive path.
   for (int attempt = 0; attempt < 3; attempt++) {
-    if (sendToDashboard(doc)) return;
+    if (sendToDashboard(doc) == 200) return;
     delay(300);
   }
   Serial.println("[WARN] DISTRESS POST failed after 3 attempts");
@@ -169,6 +183,13 @@ void setup() {
     return;
   }
   esp_now_register_recv_cb(onDataRecv);
+
+  Serial.print("Posting telemetry to: ");
+  Serial.println(DASHBOARD_URL);
+  if (String(DASHBOARD_URL).indexOf("192.168.1.50") != -1) {
+    Serial.println("[WARN] DASHBOARD_URL still looks like the placeholder IP — "
+                    "edit it at the top of this file to your dashboard laptop's actual IP.");
+  }
 
   Serial.println("Wall node ready.");
 }
