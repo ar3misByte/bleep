@@ -18,8 +18,8 @@
 // that. This board never needs an IP of its own for anything; it
 // only sends ESP-NOW unicasts to WALL_MAC below.
 
-const char* WIFI_SSID     = "kkkk";
-const char* WIFI_PASSWORD = "123456879";
+const char* WIFI_SSID     = "shitstorm";
+const char* WIFI_PASSWORD = "boombox1";
 
 // -------------------- WORKER SETTINGS -----------------------
 

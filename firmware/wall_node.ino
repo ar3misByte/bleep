@@ -21,10 +21,16 @@
 // Must match worker_node.ino's WIFI_SSID/WIFI_PASSWORD exactly — both
 // boards need to be on the same WiFi network for ESP-NOW to reach
 // across them (this also gives the wall node an IP to POST from).
-const char* WIFI_SSID     = "kkkk";
-const char* WIFI_PASSWORD = "123456879";
+const char* WIFI_SSID     = "shitstorm";
+const char* WIFI_PASSWORD = "boombox1";
 const char* DASHBOARD_URL = "http://10.177.169.223:5000/api/telemetry"; // laptop's WiFi IPv4 — update this if the laptop's IP changes
 const char* NODE_ID       = "WALL1";
+
+// How often to tell the dashboard "this wall node is alive," separate
+// from relaying worker telemetry — this is what lets the dashboard
+// show the wall node as online even during a quiet stretch with no
+// worker messages to forward.
+const unsigned long HEARTBEAT_INTERVAL_MS = 5000;
 
 // The worker's wearable ESP32 — get this by reading "Wall MAC
 // Address:" style output from WiFi.macAddress() on that board's own
@@ -89,6 +95,38 @@ int sendToDashboard(JsonDocument& doc) {
   }
 
   return code;
+}
+
+// Same host/port as DASHBOARD_URL, just a different path — derived at
+// runtime so there's only one IP to edit when the laptop's IP changes.
+String heartbeatUrl() {
+  String url = String(DASHBOARD_URL);
+  int idx = url.indexOf("/api/telemetry");
+  if (idx == -1) return url; // shouldn't happen; DASHBOARD_URL always ends in /api/telemetry
+  return url.substring(0, idx) + "/api/node-heartbeat";
+}
+
+// A dropped heartbeat isn't a big deal — the next one follows in
+// HEARTBEAT_INTERVAL_MS, so this only logs on failure to avoid
+// spamming Serial every few seconds when everything is fine.
+void sendHeartbeat() {
+  if (!wifiIsUp()) return;
+
+  StaticJsonDocument<96> doc;
+  doc["nodeId"] = NODE_ID;
+  doc["timestamp"] = millis();
+
+  HTTPClient http;
+  http.begin(heartbeatUrl());
+  http.addHeader("Content-Type", "application/json");
+  String body;
+  serializeJson(doc, body);
+  int code = http.POST(body);
+  http.end();
+
+  if (code != 200) {
+    Serial.printf("[HEARTBEAT] POST failed, code %d\n", code);
+  }
 }
 
 void sendStatus(const WorkerPacket& pkt, int rssi, bool haveRssi) {
@@ -252,6 +290,8 @@ unsigned long lastSimFallMs = 0;
 bool simRecoveryPending = false;
 unsigned long simRecoveryDueMs = 0;
 
+unsigned long lastHeartbeatMs = 0;
+
 void sendSimulatedStatus() {
   WorkerPacket pkt = {};
   strncpy(pkt.workerId, SIM_WORKER_ID, sizeof(pkt.workerId) - 1);
@@ -360,6 +400,9 @@ void setup() {
     lastSimFallMs = now;
   }
 
+  lastHeartbeatMs = millis();
+  sendHeartbeat(); // announce presence immediately at boot, don't wait for the first interval
+
   Serial.println("Wall node ready.");
 }
 
@@ -367,9 +410,15 @@ void loop() {
   // ESP-NOW delivery (real hardware) is interrupt-driven via
   // onDataReceive() and needs nothing here. WiFi reconnection is handled
   // by the core's built-in auto-reconnect (on by default in WIFI_STA
-  // mode). The only polling this loop does is the local simulator,
-  // which is itself millis()-based, not a blocking delay().
+  // mode). The only polling this loop does is the local simulator and
+  // the heartbeat below, both millis()-based, not blocking delay().
   if (SIMULATE_LOCAL_DATA) {
     runLocalSimulation();
+  }
+
+  unsigned long now = millis();
+  if (now - lastHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {
+    lastHeartbeatMs = now;
+    sendHeartbeat();
   }
 }

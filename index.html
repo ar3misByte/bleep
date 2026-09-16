@@ -63,7 +63,7 @@
   .event-time { font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
   .event-text { font-size: 13px; }
 
-  .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+  .grid-5 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
   .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 
   .alert-banner { display: none; align-items: center; gap: 12px; background: #fbe9e9; border: 1px solid #edb3b3; border-left: 5px solid var(--critical); border-radius: 6px; padding: 14px 18px; }
@@ -74,7 +74,7 @@
     .app-shell { flex-direction: column; }
     .sidebar { width: 100%; flex-direction: row; align-items: center; padding: 12px 16px; }
     .sidebar-search { display: none; }
-    .grid-4, .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-5, .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 </style>
 </head>
@@ -120,7 +120,11 @@
         </div>
       </div>
 
-      <div class="grid-4">
+      <div class="grid-5">
+        <div class="stat-card">
+          <div class="stat-label">Wall Nodes Online</div>
+          <div class="mono stat-value" id="stat-nodes">—</div>
+        </div>
         <div class="stat-card">
           <div class="stat-label">Workers Reporting</div>
           <div class="mono stat-value" id="stat-workers">—</div>
@@ -168,7 +172,8 @@
 <script>
 (function () {
   var POLL_MS = 2000;
-  var STALE_MS = 15000; // matches wall_node.ino's own staleness expectations
+  var STALE_MS = 15000;      // worker staleness — matches wall_node.ino's own expectations
+  var NODE_STALE_MS = 15000; // wall node heartbeat is every 5s, so this allows ~2 missed beats
 
   var lastPollOk = false;
   var allWorkers = {};
@@ -292,11 +297,13 @@
   function poll() {
     Promise.all([
       fetch('/api/workers').then(function (r) { return r.ok ? r.json() : Promise.reject(); }),
-      fetch('/api/events?limit=30').then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      fetch('/api/events?limit=30').then(function (r) { return r.ok ? r.json() : Promise.reject(); }),
+      fetch('/api/nodes').then(function (r) { return r.ok ? r.json() : Promise.reject(); })
     ]).then(function (results) {
       lastPollOk = true;
       allWorkers = results[0];
       var eventsList = results[1];
+      var allNodes = results[2];
 
       document.getElementById('stat-network').textContent = 'Online';
       document.getElementById('stat-network').style.color = 'var(--good)';
@@ -304,6 +311,14 @@
       var summary = renderRoster(allWorkers);
       applyFilter();
       renderEvents(eventsList);
+
+      var now = Date.now();
+      var nodeIds = Object.keys(allNodes);
+      var onlineNodeCount = nodeIds.filter(function (id) {
+        return (now - new Date(allNodes[id].lastSeenAt).getTime()) <= NODE_STALE_MS;
+      }).length;
+      document.getElementById('stat-nodes').textContent = String(onlineNodeCount);
+      document.getElementById('stat-nodes').style.color = onlineNodeCount > 0 ? 'var(--good)' : 'var(--critical)';
 
       var workerCount = Object.keys(allWorkers).length;
       document.getElementById('stat-workers').textContent = String(workerCount);
@@ -324,12 +339,19 @@
       });
       document.getElementById('stat-last-update').textContent = newest ? fmtLocalClock(newest) : '—';
 
-      if (workerCount === 0) {
-        setConnectionFlag('waiting', 'RELAY OK · NO DATA YET');
-        setWallNodeStatus('var(--waiting)', 'Wall Node · No data yet');
-      } else if (newest && (Date.now() - newest.getTime()) > STALE_MS) {
-        setConnectionFlag('waiting', 'RELAY OK · STALE DATA');
-        setWallNodeStatus('var(--offline)', 'Wall Node · Stale (>15s)');
+      // Wall-node connectivity now comes from its own heartbeat
+      // (/api/nodes), not from whether a worker happens to be
+      // reporting — a wall node with no worker nearby is still a
+      // wall node that's online.
+      if (onlineNodeCount === 0) {
+        setConnectionFlag('down', 'WALL NODE OFFLINE');
+        setWallNodeStatus('var(--critical)', 'Wall Node · Offline (no heartbeat)');
+      } else if (workerCount === 0) {
+        setConnectionFlag('waiting', 'NODE OK · NO WORKER DATA');
+        setWallNodeStatus('var(--good)', 'Wall Node · Connected (no worker yet)');
+      } else if (newest && (now - newest.getTime()) > STALE_MS) {
+        setConnectionFlag('waiting', 'NODE OK · STALE WORKER DATA');
+        setWallNodeStatus('var(--good)', 'Wall Node · Connected');
       } else {
         setConnectionFlag('live', 'LIVE');
         setWallNodeStatus('var(--good)', 'Wall Node · Connected');
@@ -340,6 +362,8 @@
       setWallNodeStatus('var(--offline)', 'Wall Node · Unknown');
       document.getElementById('stat-network').textContent = 'Offline';
       document.getElementById('stat-network').style.color = 'var(--critical)';
+      document.getElementById('stat-nodes').textContent = '—';
+      document.getElementById('stat-nodes').style.color = 'var(--text)';
     });
   }
 
