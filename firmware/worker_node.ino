@@ -1,101 +1,127 @@
+#include <WiFi.h>
+#include <esp_now.h>
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
-#include <WiFi.h>
-#include <esp_now.h>
 
 // ============================================================
-// SENSORA WORKER NODE
-// CONSERVATIVE FALL DETECTOR
-// MPU6050 + LED + BUZZER + ESP-NOW
+// SENSORA - WORKER ESP32
+// MPU6050 + FALL DETECTION + ESP-NOW
+// ESP32 Arduino Core 3.x compatible (wifi_tx_info_t send callback)
 // ============================================================
 
-// -------------------- WIFI / ESP-NOW ---------------
+// -------------------- WIFI ------------------------------------
 //
-// Must join the SAME WiFi network as the wall node — ESP-NOW
-// send only reaches devices on the same WiFi channel, and
-// joining the router is the easiest way to guarantee that
-// (the wall node does the same thing in wall_node.ino).
-// This board never needs an IP of its own for anything; it
-// only sends ESP-NOW broadcasts.
+// Must be the SAME network the wall node connects to in
+// wall_node.ino — ESP-NOW only reaches devices on the same WiFi
+// channel, and joining the router is the easiest way to guarantee
+// that. This board never needs an IP of its own for anything; it
+// only sends ESP-NOW unicasts to WALL_MAC below.
 
 const char* WIFI_SSID     = "kkkk";
 const char* WIFI_PASSWORD = "123456879";
-const char* WORKER_ID     = "W1";
 
-// How often to send a routine STATUS packet while nothing is
-// wrong. Matches the wall node / dashboard's "every ~2s" protocol
-// recommendation.
-const unsigned long STATUS_INTERVAL_MS = 2000;
+// -------------------- WORKER SETTINGS -----------------------
 
-// -------------------- MPU6050 --------------------
+const char WORKER_ID[] = "W1";
+
+// Wall ESP32 MAC — read from that board's own "Wall MAC Address:"
+// boot log. Sending directly to it (instead of broadcasting) means
+// only this specific wall node receives it.
+const uint8_t WALL_MAC[] = {
+  0x68, 0x25, 0xDD, 0x31, 0xB4, 0x60
+};
+
+
+// -------------------- MPU6050 -------------------------------
 
 const int SDA_PIN = 21;
 const int SCL_PIN = 22;
 
-// -------------------- ALERT OUTPUTS ----------------
+
+// -------------------- ALERT OUTPUTS --------------------------
 
 const int LED_PIN = 2;
 const int BUZZER_PIN = 4;
 
-// -------------------- SAMPLING --------------------
 
-const unsigned long SAMPLE_INTERVAL_MS = 100;
+// -------------------- SAMPLING -------------------------------
 
-// -------------------- FALL PARAMETERS -------------
-//
-// These are STARTING values.
-// They MUST be tuned using your actual MPU6050 readings.
-//
+// MPU is checked continuously at approximately 10 Hz
+const unsigned long SENSOR_INTERVAL_MS = 100;
+
+
+// -------------------- STATUS TRANSMISSION --------------------
+
+// 10 seconds. Stays comfortably under the dashboard's 15s
+// offline-staleness threshold (see dashboard_features.md) — don't
+// push this much higher without also raising that threshold, or a
+// single missed send will show the worker as OFFLINE.
+const unsigned long STATUS_INTERVAL_MS = 10000;
+
+
+// ============================================================
+// FALL DETECTION PARAMETERS
+// ============================================================
 
 // Strong acceleration required to create a fall candidate.
-// 18 m/s² ≈ 1.84 g.
+// Starting value only — tune using real testing.
 const float IMPACT_THRESHOLD = 18.0;
 
-// Very low motion after the candidate is considered inactivity.
-// This will be tuned after testing.
+
+// Movement threshold during the 20-second confirmation.
+// If worker moves above this level, the possible fall is cancelled.
 const float LOW_MOTION_THRESHOLD = 4.0;
 
-// Ignore the immediate movement caused by impact.
+
+// Ignore movement immediately after impact.
 const unsigned long SETTLING_TIME_MS = 2000;
 
-// Worker gets 20 seconds to recover/move before alarm.
+
+// Worker gets 20 seconds to recover/move.
 const unsigned long FALL_CONFIRMATION_TIME_MS = 20000;
 
-// To avoid reacting to one noisy sample,
-// impact must be observed more than once.
+
+// Require multiple impact samples to reduce noise.
 const int REQUIRED_IMPACT_SAMPLES = 2;
 
-// -------------------- DEBUG ------------------------
 
+// ============================================================
+// DEBUG
+// ============================================================
+
+// Print sensor status once per second.
+// This does NOT affect the STATUS transmission interval above.
 const unsigned long DEBUG_INTERVAL_MS = 1000;
 
 
 // ============================================================
-// ESP-NOW WIRE FORMAT
+// ESP-NOW PACKET
+// MUST MATCH WALL NODE EXACTLY
 // ============================================================
-//
-// Must match the wall node's struct EXACTLY — field order, types
-// and sizes are the ESP-NOW wire format. If you change one side,
-// change the other. See firmware/wall_node.ino in this repo.
 
 typedef struct __attribute__((packed)) {
+
   char workerId[8];
-  uint8_t msgType;              // 0 = STATUS, 1 = DISTRESS
+
+  uint8_t msgType;
+
   char riskState[16];
+
   char hazardType[16];
+
   float motionEnergy;
+
   float secondsSinceMotion;
+
   float motionEnergyAtTrigger;
+
   uint32_t seq;
+
 } WorkerPacket;
 
-// Broadcast address — reaches any ESP32 in range on this WiFi
-// channel without needing to know the wall node's exact MAC.
-uint8_t wallNodeAddress[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
-uint32_t seqCounter = 0;
-unsigned long lastStatusMs = 0;
+WorkerPacket packet;
 
 
 // ============================================================
@@ -109,27 +135,26 @@ Adafruit_MPU6050 mpu;
 // SENSOR VARIABLES
 // ============================================================
 
-float accelX = 0;
-float accelY = 0;
-float accelZ = 0;
+float accelX = 0.0;
+float accelY = 0.0;
+float accelZ = 0.0;
 
-float accelerationMagnitude = 0;
+float accelerationMagnitude = 0.0;
 
-float previousX = 0;
-float previousY = 0;
-float previousZ = 0;
+float previousX = 0.0;
+float previousY = 0.0;
+float previousZ = 0.0;
 
-float motionEnergy = 0;
+float motionEnergy = 0.0;
 
 
 // ============================================================
-// STATE MACHINE
+// FALL STATE MACHINE
 // ============================================================
 
 enum FallState {
 
   NORMAL,
-  IMPACT_DETECTED,
   SETTLING,
   CONFIRMING,
   FALL_CONFIRMED
@@ -143,10 +168,14 @@ FallState state = NORMAL;
 // TIMERS
 // ============================================================
 
-unsigned long lastSampleTime = 0;
+unsigned long lastSensorTime = 0;
+
+unsigned long lastStatusTime = 0;
+
 unsigned long lastDebugTime = 0;
 
 unsigned long impactTime = 0;
+
 unsigned long confirmationStartTime = 0;
 
 
@@ -158,54 +187,308 @@ int impactSamples = 0;
 
 
 // ============================================================
-// ESP-NOW SEND HELPERS
+// FALL DATA
 // ============================================================
 
-void onEspNowSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
-  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "[ESP-NOW] sent OK" : "[ESP-NOW] send FAILED");
+float motionEnergyAtTrigger = 0.0;
+
+
+// ============================================================
+// PACKET SEQUENCE
+// ============================================================
+
+// Starts at 0 and increments for every packet.
+// It does not reset while the ESP32 remains running.
+uint32_t sequenceNumber = 0;
+
+
+// ============================================================
+// ESP-NOW SEND CALLBACK
+// Compatible with ESP32 Arduino Core 3.x
+// ============================================================
+
+void onDataSent(
+  const wifi_tx_info_t *info,
+  esp_now_send_status_t status
+) {
+
+  Serial.print("[ESP-NOW] ");
+
+  if (status == ESP_NOW_SEND_SUCCESS) {
+
+    Serial.println("SEND SUCCESS");
+
+  } else {
+
+    Serial.println("SEND FAILED");
+  }
 }
 
-void sendWorkerPacket(uint8_t msgType, const char* riskState, const char* hazardType,
-                       float sentMotionEnergy, float secondsSinceMotion, float motionEnergyAtTrigger) {
-  WorkerPacket pkt = {};
-  strncpy(pkt.workerId, WORKER_ID, sizeof(pkt.workerId) - 1);
-  pkt.msgType = msgType;
-  strncpy(pkt.riskState, riskState, sizeof(pkt.riskState) - 1);
-  strncpy(pkt.hazardType, hazardType, sizeof(pkt.hazardType) - 1);
-  pkt.motionEnergy = sentMotionEnergy;
-  pkt.secondsSinceMotion = secondsSinceMotion;
-  pkt.motionEnergyAtTrigger = motionEnergyAtTrigger;
-  pkt.seq = seqCounter++;
 
-  esp_err_t result = esp_now_send(wallNodeAddress, (uint8_t*)&pkt, sizeof(pkt));
-  Serial.printf("[ESP-NOW] seq=%u msgType=%u riskState=%-16s -> %s\n",
-                (unsigned)pkt.seq, pkt.msgType, pkt.riskState,
-                result == ESP_OK ? "queued" : "FAILED to queue");
+// ============================================================
+// PRINT PACKET
+// ============================================================
+
+void printPacket() {
+
+  Serial.println();
+  Serial.println("========================================");
+  Serial.println("       OUTGOING SENSORA PACKET");
+  Serial.println("========================================");
+
+  Serial.print("workerId: ");
+  Serial.println(packet.workerId);
+
+  Serial.print("msgType: ");
+  Serial.println(packet.msgType);
+
+  Serial.print("riskState: ");
+  Serial.println(packet.riskState);
+
+  Serial.print("hazardType: ");
+  Serial.println(packet.hazardType);
+
+  Serial.print("motionEnergy: ");
+  Serial.println(packet.motionEnergy, 2);
+
+  Serial.print("secondsSinceMotion: ");
+  Serial.println(packet.secondsSinceMotion, 2);
+
+  Serial.print("motionEnergyAtTrigger: ");
+  Serial.println(packet.motionEnergyAtTrigger, 2);
+
+  Serial.print("seq: ");
+  Serial.println(packet.seq);
+
+  Serial.println("========================================");
 }
+
+
+// ============================================================
+// SEND STATUS PACKET
+// ============================================================
 
 void sendStatusPacket() {
-  // secondsSinceMotion is approximate here — 0 whenever we're
-  // actively sampling in NORMAL state. It only matters precisely
-  // on the DISTRESS path below, which is what the dashboard's
-  // inactivity timer actually uses.
-  sendWorkerPacket(0, "OK", "", motionEnergy, 0, 0);
-}
 
-void sendDistressPacket() {
-  // FALL_CONFIRMATION_TIME_MS is the exact threshold that just
-  // fired, so it's the right "seconds inactive" to report — the
-  // real elapsed time is >= this value by at most one sample
-  // interval (100ms), close enough for the dashboard's timer.
-  sendWorkerPacket(1, "FALL_SUSPECTED", "FALL_SUSPECTED",
-                   motionEnergy, FALL_CONFIRMATION_TIME_MS / 1000.0, motionEnergy);
+  memset(
+    &packet,
+    0,
+    sizeof(packet)
+  );
+
+
+  strncpy(
+    packet.workerId,
+    WORKER_ID,
+    sizeof(packet.workerId) - 1
+  );
+
+
+  packet.msgType = 0;
+
+
+  strncpy(
+    packet.riskState,
+    "OK",
+    sizeof(packet.riskState) - 1
+  );
+
+
+  packet.hazardType[0] = '\0';
+
+
+  packet.motionEnergy =
+    motionEnergy;
+
+
+  // Time since the last detected impact event.
+  packet.secondsSinceMotion =
+    (millis() - impactTime) / 1000.0;
+
+
+  packet.motionEnergyAtTrigger =
+    0.0;
+
+
+  packet.seq =
+    sequenceNumber++;
+
+
+  Serial.println();
+  Serial.println(">>> SENDING ROUTINE STATUS");
+
+
+  printPacket();
+
+
+  esp_err_t result =
+    esp_now_send(
+      WALL_MAC,
+      (uint8_t *)&packet,
+      sizeof(packet)
+    );
+
+
+  if (result != ESP_OK) {
+
+    Serial.print(
+      "[ESP-NOW] STATUS error: "
+    );
+
+    Serial.println(result);
+  }
 }
 
 
 // ============================================================
-// HELPER: RESET FALL DETECTION
+// TRIGGER FALL
 // ============================================================
 
-void resetFallDetection() {
+void triggerFall() {
+
+  if (
+    state == FALL_CONFIRMED
+  ) {
+
+    return;
+  }
+
+
+  state = FALL_CONFIRMED;
+
+
+  motionEnergyAtTrigger =
+    motionEnergy;
+
+
+  // ==========================================================
+  // LOCAL ALERT
+  // ==========================================================
+
+  digitalWrite(
+    LED_PIN,
+    HIGH
+  );
+
+  digitalWrite(
+    BUZZER_PIN,
+    HIGH
+  );
+
+
+  Serial.println();
+  Serial.println();
+  Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+  Serial.println("          !!! FALL CONFIRMED !!!");
+  Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+
+  Serial.println("LED    : ON");
+  Serial.println("BUZZER : ON");
+
+
+  // ==========================================================
+  // BUILD DISTRESS PACKET
+  // ==========================================================
+
+  memset(
+    &packet,
+    0,
+    sizeof(packet)
+  );
+
+
+  strncpy(
+    packet.workerId,
+    WORKER_ID,
+    sizeof(packet.workerId) - 1
+  );
+
+
+  packet.msgType = 1;
+
+
+  strncpy(
+    packet.riskState,
+    "FALL_SUSPECTED",
+    sizeof(packet.riskState) - 1
+  );
+
+
+  strncpy(
+    packet.hazardType,
+    "FALL_SUSPECTED",
+    sizeof(packet.hazardType) - 1
+  );
+
+
+  packet.motionEnergy =
+    motionEnergy;
+
+
+  packet.secondsSinceMotion =
+    (millis() - impactTime) / 1000.0;
+
+
+  packet.motionEnergyAtTrigger =
+    motionEnergyAtTrigger;
+
+
+  packet.seq =
+    sequenceNumber++;
+
+
+  // ==========================================================
+  // PRINT BEFORE TRANSMISSION
+  // ==========================================================
+
+  Serial.println(
+    ">>> IMMEDIATE DISTRESS PACKET"
+  );
+
+  printPacket();
+
+
+  // ==========================================================
+  // SEND IMMEDIATELY
+  // ==========================================================
+
+  esp_err_t result =
+    esp_now_send(
+      WALL_MAC,
+      (uint8_t *)&packet,
+      sizeof(packet)
+    );
+
+
+  if (
+    result == ESP_OK
+  ) {
+
+    Serial.println(
+      ">>> DISTRESS PACKET HANDED TO ESP-NOW"
+    );
+
+  } else {
+
+    Serial.print(
+      ">>> DISTRESS SEND ERROR: "
+    );
+
+    Serial.println(result);
+  }
+
+
+  Serial.println(
+    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  );
+}
+
+
+// ============================================================
+// RESET POSSIBLE FALL
+// ============================================================
+
+void cancelFall() {
 
   state = NORMAL;
 
@@ -215,46 +498,24 @@ void resetFallDetection() {
 
   confirmationStartTime = 0;
 
-  Serial.println();
-  Serial.println(">>> FALL CANDIDATE CANCELLED");
-  Serial.println(">>> Worker movement detected");
-  Serial.println(">>> Returning to NORMAL");
-  Serial.println();
-}
-
-
-// ============================================================
-// HELPER: ALERT ON
-// ============================================================
-
-void triggerAlarm() {
-
-  state = FALL_CONFIRMED;
-
-  digitalWrite(LED_PIN, HIGH);
-  digitalWrite(BUZZER_PIN, HIGH);
-
-  // Tell the wall node right away — a dropped fall alert is not
-  // acceptable, so send it a couple of extra times over the next
-  // second in case the first ESP-NOW frame is lost in the air.
-  sendDistressPacket();
-  sendDistressPacket();
 
   Serial.println();
-  Serial.println("========================================");
-  Serial.println("          !!! FALL CONFIRMED !!!");
-  Serial.println("========================================");
+  Serial.println(
+    ">>> MOVEMENT DETECTED"
+  );
 
-  Serial.println("LED    : ON");
-  Serial.println("BUZZER : ON");
+  Serial.println(
+    ">>> FALL CANDIDATE CANCELLED"
+  );
 
-  Serial.print("Acceleration magnitude: ");
-  Serial.println(accelerationMagnitude, 2);
+  Serial.println(
+    ">>> WORKER CONTINUED MOVING"
+  );
 
-  Serial.print("Motion energy: ");
-  Serial.println(motionEnergy, 2);
+  Serial.println(
+    ">>> RETURNING TO NORMAL"
+  );
 
-  Serial.println("========================================");
   Serial.println();
 }
 
@@ -269,6 +530,7 @@ void readMPU() {
   sensors_event_t gyro;
   sensors_event_t temperature;
 
+
   mpu.getEvent(
     &accel,
     &gyro,
@@ -276,61 +538,80 @@ void readMPU() {
   );
 
 
-  accelX = accel.acceleration.x;
-  accelY = accel.acceleration.y;
-  accelZ = accel.acceleration.z;
+  accelX =
+    accel.acceleration.x;
+
+  accelY =
+    accel.acceleration.y;
+
+  accelZ =
+    accel.acceleration.z;
 
 
-  // ----------------------------------------------------------
-  // TOTAL ACCELERATION MAGNITUDE
-  // ----------------------------------------------------------
+  // ==========================================================
+  // TOTAL ACCELERATION
+  // ==========================================================
 
-  accelerationMagnitude = sqrt(
+  accelerationMagnitude =
+    sqrt(
 
-    accelX * accelX +
-    accelY * accelY +
-    accelZ * accelZ
+      accelX * accelX +
+      accelY * accelY +
+      accelZ * accelZ
 
-  );
+    );
 
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // MOTION ENERGY
-  // ----------------------------------------------------------
+  // ==========================================================
 
-  float dx = accelX - previousX;
-  float dy = accelY - previousY;
-  float dz = accelZ - previousZ;
+  float dx =
+    accelX - previousX;
 
-  float currentChange = sqrt(
+  float dy =
+    accelY - previousY;
 
-    dx * dx +
-    dy * dy +
-    dz * dz
-
-  );
+  float dz =
+    accelZ - previousZ;
 
 
-  // Smooth the energy value instead of reacting to one sample.
+  float currentChange =
+    sqrt(
 
+      dx * dx +
+      dy * dy +
+      dz * dz
+
+    );
+
+
+  // Smooth the motion energy.
   motionEnergy =
     (motionEnergy * 0.8) +
     (currentChange * 0.2);
 
 
-  previousX = accelX;
-  previousY = accelY;
-  previousZ = accelZ;
+  previousX =
+    accelX;
+
+  previousY =
+    accelY;
+
+  previousZ =
+    accelZ;
 }
 
 
 // ============================================================
-// DEBUG DISPLAY
+// DEBUG STATUS
 // ============================================================
 
 void printDebug() {
 
-  unsigned long now = millis();
+  unsigned long now =
+    millis();
+
 
   if (
     now - lastDebugTime <
@@ -340,36 +621,46 @@ void printDebug() {
     return;
   }
 
-  lastDebugTime = now;
+
+  lastDebugTime =
+    now;
 
 
   Serial.print("[DATA] ");
 
-  Serial.print("A=");
+  Serial.print(
+    "A="
+  );
+
   Serial.print(
     accelerationMagnitude,
     2
   );
 
-  Serial.print(" m/s2");
+  Serial.print(
+    " m/s2"
+  );
 
-  Serial.print(" | Energy=");
+
+  Serial.print(
+    " | Energy="
+  );
+
   Serial.print(
     motionEnergy,
     2
   );
 
-  Serial.print(" | State=");
+
+  Serial.print(
+    " | State="
+  );
 
 
   switch (state) {
 
     case NORMAL:
       Serial.println("NORMAL");
-      break;
-
-    case IMPACT_DETECTED:
-      Serial.println("IMPACT_DETECTED");
       break;
 
     case SETTLING:
@@ -398,9 +689,9 @@ void setup() {
   delay(500);
 
 
-  // ----------------------------------------------------------
-  // OUTPUTS
-  // ----------------------------------------------------------
+  // ==========================================================
+  // ALERT OUTPUTS
+  // ==========================================================
 
   pinMode(
     LED_PIN,
@@ -411,6 +702,7 @@ void setup() {
     BUZZER_PIN,
     OUTPUT
   );
+
 
   digitalWrite(
     LED_PIN,
@@ -423,46 +715,9 @@ void setup() {
   );
 
 
-  // ----------------------------------------------------------
-  // WIFI + ESP-NOW
-  // ----------------------------------------------------------
-
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  Serial.print("Connecting to WiFi (to match the wall node's channel)");
-  unsigned long wifiStart = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 15000) {
-    Serial.print(".");
-    delay(250); // one-time boot connect, not the main loop
-  }
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("Connected. WiFi channel: ");
-    Serial.println(WiFi.channel());
-  } else {
-    Serial.println("[WARN] WiFi not connected — ESP-NOW likely won't reach the wall node if channels differ");
-  }
-
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("[ERROR] esp_now_init failed");
-  } else {
-    esp_now_register_send_cb(onEspNowSent);
-
-    esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, wallNodeAddress, 6);
-    peerInfo.channel = 0; // use whatever channel WiFi is already on
-    peerInfo.encrypt = false;
-    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-      Serial.println("[ERROR] esp_now_add_peer failed");
-    }
-  }
-
-
-  // ----------------------------------------------------------
+  // ==========================================================
   // I2C
-  // ----------------------------------------------------------
+  // ==========================================================
 
   Wire.begin(
     SDA_PIN,
@@ -472,24 +727,27 @@ void setup() {
 
   Serial.println();
   Serial.println("========================================");
-  Serial.println("       SENSORA FALL DETECTOR");
+  Serial.println("       SENSORA WORKER ESP32");
   Serial.println("========================================");
 
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // MPU6050
-  // ----------------------------------------------------------
+  // ==========================================================
 
   Serial.println(
     "Initializing MPU6050..."
   );
 
 
-  if (!mpu.begin()) {
+  if (
+    !mpu.begin()
+  ) {
 
     Serial.println(
       "ERROR: MPU6050 NOT FOUND"
     );
+
 
     while (true) {
 
@@ -528,13 +786,14 @@ void setup() {
   );
 
 
-  // ----------------------------------------------------------
-  // INITIAL SENSOR READ
-  // ----------------------------------------------------------
+  // ==========================================================
+  // INITIAL MPU READING
+  // ==========================================================
 
   sensors_event_t accel;
   sensors_event_t gyro;
   sensors_event_t temperature;
+
 
   mpu.getEvent(
     &accel,
@@ -553,52 +812,157 @@ void setup() {
     accel.acceleration.z;
 
 
-  // ----------------------------------------------------------
+  // ==========================================================
+  // WIFI
+  // ==========================================================
+  //
+  // Joining the router (rather than just setting WIFI_STA mode)
+  // is what locks this board onto the same channel the wall node
+  // is on — without this, ESP-NOW frames sent to WALL_MAC may
+  // never arrive if the two boards end up on different channels.
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  Serial.print("Connecting to WiFi (to match the wall node's channel)");
+  unsigned long wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 15000) {
+    Serial.print(".");
+    delay(250); // one-time boot connect, not the main loop
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("Connected. WiFi channel: ");
+    Serial.println(WiFi.channel());
+  } else {
+    Serial.println("[WARN] WiFi not connected — ESP-NOW likely won't reach the wall node if channels differ");
+  }
+
+
+  // ==========================================================
+  // ESP-NOW
+  // ==========================================================
+
+  Serial.print(
+    "Worker MAC: "
+  );
+
+  Serial.println(
+    WiFi.macAddress()
+  );
+
+
+  if (
+    esp_now_init() != ESP_OK
+  ) {
+
+    Serial.println(
+      "ERROR: ESP-NOW INIT FAILED"
+    );
+
+    while (true) {
+
+      delay(1000);
+    }
+  }
+
+
+  Serial.println(
+    "ESP-NOW initialized"
+  );
+
+
+  esp_now_register_send_cb(
+    onDataSent
+  );
+
+
+  // ==========================================================
+  // ADD WALL PEER
+  // ==========================================================
+
+  esp_now_peer_info_t peerInfo = {};
+
+
+  memcpy(
+    peerInfo.peer_addr,
+    WALL_MAC,
+    6
+  );
+
+
+  peerInfo.channel = 0;
+
+  peerInfo.encrypt = false;
+
+
+  if (
+    esp_now_add_peer(
+      &peerInfo
+    ) != ESP_OK
+  ) {
+
+    Serial.println(
+      "ERROR: FAILED TO ADD WALL PEER"
+    );
+
+  } else {
+
+    Serial.println(
+      "Wall peer added"
+    );
+  }
+
+
+  // ==========================================================
+  // START TIMERS
+  // ==========================================================
+
+  lastSensorTime =
+    millis();
+
+  lastStatusTime =
+    millis();
+
+  lastDebugTime =
+    millis();
+
+  impactTime =
+    millis();
+
+
+  // ==========================================================
   // READY
-  // ----------------------------------------------------------
-
-  lastSampleTime = millis();
-
-  lastDebugTime = millis();
-
-  lastStatusMs = millis();
-
+  // ==========================================================
 
   Serial.println();
   Serial.println("----------------------------------------");
+
+  Serial.print(
+    "Status interval: "
+  );
+
+  Serial.print(
+    STATUS_INTERVAL_MS / 1000
+  );
+
+  Serial.println(
+    " seconds"
+  );
+
 
   Serial.print(
     "Impact threshold: "
   );
 
   Serial.print(
-    IMPACT_THRESHOLD
+    IMPACT_THRESHOLD,
+    2
   );
 
   Serial.println(
     " m/s2"
-  );
-
-
-  Serial.print(
-    "Low-motion threshold: "
-  );
-
-  Serial.println(
-    LOW_MOTION_THRESHOLD
-  );
-
-
-  Serial.print(
-    "Settling time: "
-  );
-
-  Serial.print(
-    SETTLING_TIME_MS / 1000
-  );
-
-  Serial.println(
-    " sec"
   );
 
 
@@ -611,14 +975,14 @@ void setup() {
   );
 
   Serial.println(
-    " sec"
+    " seconds"
   );
 
 
   Serial.println("----------------------------------------");
 
   Serial.println(
-    "Worker fall detector READY"
+    "SENSORA WORKER READY"
   );
 
   Serial.println();
@@ -626,50 +990,33 @@ void setup() {
 
 
 // ============================================================
-// LOOP
+// MAIN LOOP
 // ============================================================
 
 void loop() {
 
-  unsigned long now = millis();
+  unsigned long now =
+    millis();
 
 
   // ==========================================================
-  // ROUTINE STATUS OVER ESP-NOW
-  // ==========================================================
-  //
-  // Independent of the sensor-sampling cadence below — paused
-  // while FALL_CONFIRMED so a confirmed fall isn't drowned out
-  // by routine "OK" pings on the dashboard's event log.
-
-  if (
-    now - lastStatusMs >= STATUS_INTERVAL_MS &&
-    state != FALL_CONFIRMED
-  ) {
-
-    lastStatusMs = now;
-
-    sendStatusPacket();
-  }
-
-
-  // ==========================================================
-  // SENSOR SAMPLING
+  // 1. CONTINUOUS MPU6050 MONITORING
   // ==========================================================
 
   if (
-    now - lastSampleTime >=
-    SAMPLE_INTERVAL_MS
+    now - lastSensorTime >=
+    SENSOR_INTERVAL_MS
   ) {
 
-    lastSampleTime = now;
+    lastSensorTime =
+      now;
 
 
     readMPU();
 
 
     // ========================================================
-    // NORMAL STATE
+    // NORMAL
     // ========================================================
 
     if (
@@ -683,33 +1030,33 @@ void loop() {
 
         impactSamples++;
 
-      }
-
-      else {
+      } else {
 
         impactSamples = 0;
       }
 
-
-      // Require multiple impact samples
-      // to reduce single-sample noise.
 
       if (
         impactSamples >=
         REQUIRED_IMPACT_SAMPLES
       ) {
 
-        state = IMPACT_DETECTED;
+        state =
+          SETTLING;
 
-        impactTime = now;
+
+        impactTime =
+          now;
+
 
         Serial.println();
         Serial.println(
           ">>> POSSIBLE IMPACT DETECTED"
         );
 
+
         Serial.print(
-          ">>> Acceleration = "
+          ">>> Acceleration: "
         );
 
         Serial.print(
@@ -721,9 +1068,11 @@ void loop() {
           " m/s2"
         );
 
+
         Serial.println(
-          ">>> Starting settling period..."
+          ">>> Starting 2-second settling period..."
         );
+
 
         impactSamples = 0;
       }
@@ -731,51 +1080,41 @@ void loop() {
 
 
     // ========================================================
-    // IMPACT DETECTED → SETTLING
-    // ========================================================
-
-    if (
-      state == IMPACT_DETECTED
-    ) {
-
-      state = SETTLING;
-    }
-
-
-    // ========================================================
-    // SETTLING PERIOD
+    // SETTLING
     // ========================================================
 
     if (
       state == SETTLING
     ) {
 
-      unsigned long elapsed =
-        now - impactTime;
-
-
       if (
-        elapsed >=
+        now - impactTime >=
         SETTLING_TIME_MS
       ) {
 
-        state = CONFIRMING;
+        state =
+          CONFIRMING;
+
 
         confirmationStartTime =
           now;
+
 
         Serial.println();
         Serial.println(
           ">>> SETTLING COMPLETE"
         );
 
-        Serial.println(
-          ">>> 20 SECOND FALL CONFIRMATION STARTED"
-        );
 
         Serial.println(
-          ">>> Worker movement can CANCEL the alert"
+          ">>> 20-SECOND FALL CONFIRMATION STARTED"
         );
+
+
+        Serial.println(
+          ">>> Worker movement will CANCEL the fall"
+        );
+
 
         Serial.println();
       }
@@ -783,7 +1122,7 @@ void loop() {
 
 
     // ========================================================
-    // CONFIRMATION
+    // 20-SECOND CONFIRMATION
     // ========================================================
 
     if (
@@ -795,7 +1134,7 @@ void loop() {
 
 
       // ------------------------------------------------------
-      // WORKER MOVEMENT DETECTED
+      // MOVEMENT DETECTED
       // ------------------------------------------------------
 
       if (
@@ -803,17 +1142,15 @@ void loop() {
         LOW_MOTION_THRESHOLD
       ) {
 
-        resetFallDetection();
+        cancelFall();
       }
 
 
       // ------------------------------------------------------
-      // WORKER REMAINS INACTIVE
+      // STILL / LOW MOVEMENT
       // ------------------------------------------------------
 
       else {
-
-        // Print countdown every second.
 
         static unsigned long lastCountdown =
           0;
@@ -824,11 +1161,12 @@ void loop() {
           1000
         ) {
 
-          lastCountdown = now;
+          lastCountdown =
+            now;
 
 
           Serial.print(
-            "[FALL CHECK] Inactive: "
+            "[FALL CHECK] "
           );
 
           Serial.print(
@@ -855,7 +1193,7 @@ void loop() {
 
 
         // ----------------------------------------------------
-        // CONFIRMED
+        // FALL CONFIRMED
         // ----------------------------------------------------
 
         if (
@@ -863,7 +1201,7 @@ void loop() {
           FALL_CONFIRMATION_TIME_MS
         ) {
 
-          triggerAlarm();
+          triggerFall();
         }
       }
     }
@@ -877,8 +1215,7 @@ void loop() {
       state == FALL_CONFIRMED
     ) {
 
-      // Alarm stays ON.
-      // No automatic reset yet.
+      // Keep local alarm ON.
 
       digitalWrite(
         LED_PIN,
@@ -894,8 +1231,26 @@ void loop() {
 
 
   // ==========================================================
-  // DEBUG
+  // 2. LOW-FREQUENCY DEBUG OUTPUT
   // ==========================================================
 
   printDebug();
+
+
+  // ==========================================================
+  // 3. STATUS PACKET (every STATUS_INTERVAL_MS)
+  // ==========================================================
+
+  if (
+    state != FALL_CONFIRMED &&
+    now - lastStatusTime >=
+    STATUS_INTERVAL_MS
+  ) {
+
+    lastStatusTime =
+      now;
+
+
+    sendStatusPacket();
+  }
 }

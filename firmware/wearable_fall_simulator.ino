@@ -10,6 +10,9 @@
 // This is a TEST TOOL, not the real wearable firmware — the real
 // wearable would compute msgType/riskState/motionEnergy from an
 // actual accelerometer instead of faking them on a timer.
+//
+// Requires ESP32 Arduino Core 3.x (the send callback below uses
+// that core's wifi_tx_info_t signature).
 
 #include <WiFi.h>
 #include <esp_now.h>
@@ -54,7 +57,9 @@ unsigned long lastFallMs = 0;
 bool recoveryPending = false;
 unsigned long recoveryDueMs = 0;
 
-void onDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
+// ESP32 Arduino Core 3.x send-callback signature (wifi_tx_info_t*,
+// not the older core's plain MAC-address pointer).
+void onDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status) {
   Serial.println(status == ESP_NOW_SEND_SUCCESS ? "[ESP-NOW] sent OK" : "[ESP-NOW] send FAILED");
 }
 
