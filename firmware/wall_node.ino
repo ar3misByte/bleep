@@ -22,6 +22,14 @@ const char* WIFI_SSID     = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 const char* DASHBOARD_URL = "http://192.168.1.50:5000/api/telemetry"; // set to the laptop's actual IP
 const char* NODE_ID       = "WALL1";
+
+// Set to false once a real wearable is sending real ESP-NOW packets —
+// leaving both on would feed the dashboard two "W1" sources at once.
+const bool SIMULATE_LOCAL_DATA = true;
+const char* SIM_WORKER_ID = "W1";
+const unsigned long SIM_STATUS_INTERVAL_MS = 2000;   // matches the "every ~2s" protocol recommendation
+const unsigned long SIM_FALL_INTERVAL_MS = 45000;    // simulate a fall roughly every 45s
+const unsigned long SIM_RECOVERY_DELAY_MS = 15000;   // "worker gets back up" this long after a fall
 // ---------------------------------------------------------------------
 
 // Must match the wearable's struct exactly — field order, types and
@@ -156,9 +164,70 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
   }
 }
 
+// ---------------------------------------------------------------------
+// LOCAL FALL SIMULATION — generates dummy WorkerPackets on a timer and
+// feeds them through the exact same sendStatus()/sendDistress() path
+// a real ESP-NOW packet would use, so the dashboard can't tell the
+// difference. haveRssi is false throughout: there's no real
+// over-the-air reception happening, so we send null rather than a
+// faked signal strength.
+// ---------------------------------------------------------------------
+uint32_t simSeqCounter = 0;
+unsigned long lastSimStatusMs = 0;
+unsigned long lastSimFallMs = 0;
+bool simRecoveryPending = false;
+unsigned long simRecoveryDueMs = 0;
+
+void sendSimulatedStatus() {
+  WorkerPacket pkt = {};
+  strncpy(pkt.workerId, SIM_WORKER_ID, sizeof(pkt.workerId) - 1);
+  pkt.msgType = 0;
+  strncpy(pkt.riskState, "OK", sizeof(pkt.riskState) - 1);
+  pkt.motionEnergy = 0.30f + (random(0, 40) / 100.0f); // dummy "normal movement", 0.30-0.70 g
+  pkt.secondsSinceMotion = 0;
+  pkt.seq = simSeqCounter++;
+  sendStatus(pkt, 0, false);
+}
+
+void sendSimulatedFall() {
+  Serial.println("[SIM] *** simulating a fall now ***");
+  WorkerPacket pkt = {};
+  strncpy(pkt.workerId, SIM_WORKER_ID, sizeof(pkt.workerId) - 1);
+  pkt.msgType = 1;
+  strncpy(pkt.riskState, "FALL_SUSPECTED", sizeof(pkt.riskState) - 1);
+  strncpy(pkt.hazardType, "FALL_SUSPECTED", sizeof(pkt.hazardType) - 1);
+  pkt.secondsSinceMotion = 25.0f + (random(0, 1500) / 100.0f); // ~25-40s inactive
+  pkt.motionEnergyAtTrigger = 0.10f + (random(0, 25) / 100.0f); // low residual motion
+  pkt.seq = simSeqCounter++;
+  sendDistress(pkt, 0, false);
+}
+
+void runLocalSimulation() {
+  unsigned long now = millis();
+
+  if (now - lastSimStatusMs >= SIM_STATUS_INTERVAL_MS) {
+    lastSimStatusMs = now;
+    if (!simRecoveryPending) sendSimulatedStatus(); // pause routine STATUS while "down"
+  }
+
+  if (!simRecoveryPending && now - lastSimFallMs >= SIM_FALL_INTERVAL_MS) {
+    lastSimFallMs = now;
+    sendSimulatedFall();
+    simRecoveryPending = true;
+    simRecoveryDueMs = now + SIM_RECOVERY_DELAY_MS;
+  }
+
+  if (simRecoveryPending && now >= simRecoveryDueMs) {
+    simRecoveryPending = false;
+    Serial.println("[SIM] *** worker back up — sending recovery STATUS ***");
+    sendSimulatedStatus();
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
+  randomSeed(analogRead(0));
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -191,12 +260,25 @@ void setup() {
                     "edit it at the top of this file to your dashboard laptop's actual IP.");
   }
 
+  if (SIMULATE_LOCAL_DATA) {
+    Serial.println("[SIM] Local fall simulation ENABLED — sending dummy STATUS/DISTRESS");
+    Serial.println("[SIM] with no wearable required. Set SIMULATE_LOCAL_DATA = false once");
+    Serial.println("[SIM] real ESP-NOW hardware is sending real data.");
+    unsigned long now = millis();
+    lastSimStatusMs = now;
+    lastSimFallMs = now;
+  }
+
   Serial.println("Wall node ready.");
 }
 
 void loop() {
-  // Nothing to poll here — ESP-NOW delivery is interrupt-driven via
-  // onDataRecv(); WiFi reconnection is handled by the core's built-in
-  // auto-reconnect (WiFi.setAutoReconnect(true) is on by default in
-  // WIFI_STA mode). Keep loop() free of blocking delay().
+  // ESP-NOW delivery (real hardware) is interrupt-driven via
+  // onDataRecv() and needs nothing here. WiFi reconnection is handled
+  // by the core's built-in auto-reconnect (on by default in WIFI_STA
+  // mode). The only polling this loop does is the local simulator,
+  // which is itself millis()-based, not a blocking delay().
+  if (SIMULATE_LOCAL_DATA) {
+    runLocalSimulation();
+  }
 }
