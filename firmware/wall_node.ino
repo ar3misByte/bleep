@@ -18,10 +18,21 @@
 // ---------------------------------------------------------------------
 // EDIT THESE
 // ---------------------------------------------------------------------
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+// Must match worker_node.ino's WIFI_SSID/WIFI_PASSWORD exactly — both
+// boards need to be on the same WiFi network for ESP-NOW to reach
+// across them (this also gives the wall node an IP to POST from).
+const char* WIFI_SSID     = "kkkk";
+const char* WIFI_PASSWORD = "123456879";
 const char* DASHBOARD_URL = "http://192.168.1.50:5000/api/telemetry"; // set to the laptop's actual IP
 const char* NODE_ID       = "WALL1";
+
+// The worker's wearable ESP32 — get this by reading "Wall MAC
+// Address:" style output from WiFi.macAddress() on that board's own
+// Serial Monitor at boot. Receiving doesn't strictly require pairing
+// (ESP-NOW delivers to the registered callback from anyone in range,
+// paired or not), but adding it as a peer here leaves the door open
+// for the wall node to send something back to the worker later.
+const uint8_t WORKER_MAC[] = { 0x00, 0x70, 0x07, 0x26, 0xC3, 0x90 };
 
 // Set to false once a real wearable is sending real ESP-NOW packets —
 // leaving both on would feed the dashboard two "W1" sources at once.
@@ -135,9 +146,19 @@ void sendDistress(const WorkerPacket& pkt, int rssi, bool haveRssi) {
   Serial.println("[WARN] DISTRESS POST failed after 3 attempts");
 }
 
-void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, int len) {
+void onDataReceive(const esp_now_recv_info_t* info, const uint8_t* incomingData, int len) {
+  Serial.println();
+  Serial.println("==========================================");
+  Serial.println("          ESP-NOW PACKET RECEIVED");
+  Serial.println("==========================================");
+
   if (len != sizeof(WorkerPacket)) {
-    Serial.printf("[WARN] dropped packet: expected %u bytes, got %d\n", (unsigned)sizeof(WorkerPacket), len);
+    Serial.print("ERROR: Invalid packet size = ");
+    Serial.print(len);
+    Serial.print(" bytes | Expected = ");
+    Serial.print(sizeof(WorkerPacket));
+    Serial.println(" bytes");
+    Serial.println("==========================================");
     return;
   }
 
@@ -157,6 +178,59 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
     haveRssi = true;
   }
 
+  Serial.print("Node ID: ");
+  Serial.println(NODE_ID);
+  Serial.print("Worker ID: ");
+  Serial.println(pkt.workerId);
+
+  Serial.print("Message Type: ");
+  if (pkt.msgType == 0) {
+    Serial.println("STATUS (0)");
+  } else if (pkt.msgType == 1) {
+    Serial.println("DISTRESS (1)");
+  } else {
+    Serial.print("UNKNOWN (");
+    Serial.print(pkt.msgType);
+    Serial.println(")");
+  }
+
+  Serial.print("Risk State: ");
+  Serial.println(pkt.riskState);
+  Serial.print("Hazard Type: ");
+  Serial.println(pkt.hazardType);
+  Serial.print("Motion Energy: ");
+  Serial.println(pkt.motionEnergy, 2);
+  Serial.print("Seconds Since Motion: ");
+  Serial.println(pkt.secondsSinceMotion, 2);
+  Serial.print("Motion Energy At Trigger: ");
+  Serial.println(pkt.motionEnergyAtTrigger, 2);
+  Serial.print("Sequence Number: ");
+  Serial.println(pkt.seq);
+
+  Serial.print("ESP-NOW RSSI: ");
+  if (haveRssi) {
+    Serial.print(rssi);
+    Serial.println(" dBm");
+  } else {
+    Serial.println("N/A");
+  }
+
+  if (pkt.msgType == 1) {
+    Serial.println();
+    Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    Serial.println("             !!! DISTRESS !!!");
+    Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    Serial.print("Worker: ");
+    Serial.println(pkt.workerId);
+    Serial.print("Hazard: ");
+    Serial.println(pkt.hazardType);
+    Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+  }
+
+  Serial.println("==========================================");
+
+  // This is the part the standalone receiver sketch doesn't do —
+  // forward whatever we just printed on to the actual dashboard.
   if (pkt.msgType == 1) {
     sendDistress(pkt, rssi, haveRssi);
   } else {
@@ -247,11 +321,28 @@ void setup() {
     Serial.println("[WARN] WiFi not connected yet — will keep retrying via wifiIsUp() checks");
   }
 
+  Serial.print("Wall MAC Address: ");
+  Serial.println(WiFi.macAddress());
+
   if (esp_now_init() != ESP_OK) {
     Serial.println("[ERROR] esp_now_init failed");
     return;
   }
-  esp_now_register_recv_cb(onDataRecv);
+  esp_now_register_recv_cb(onDataReceive);
+
+  esp_now_peer_info_t workerPeer = {};
+  memcpy(workerPeer.peer_addr, WORKER_MAC, 6);
+  workerPeer.channel = 0; // use current WiFi channel
+  workerPeer.encrypt = false;
+  esp_err_t peerResult = esp_now_add_peer(&workerPeer);
+  if (peerResult == ESP_OK) {
+    Serial.println("Worker peer added successfully");
+  } else if (peerResult == ESP_ERR_ESPNOW_EXIST) {
+    Serial.println("Worker peer already exists");
+  } else {
+    Serial.print("[ERROR] Failed to add worker peer: ");
+    Serial.println(peerResult);
+  }
 
   Serial.print("Posting telemetry to: ");
   Serial.println(DASHBOARD_URL);
@@ -274,7 +365,7 @@ void setup() {
 
 void loop() {
   // ESP-NOW delivery (real hardware) is interrupt-driven via
-  // onDataRecv() and needs nothing here. WiFi reconnection is handled
+  // onDataReceive() and needs nothing here. WiFi reconnection is handled
   // by the core's built-in auto-reconnect (on by default in WIFI_STA
   // mode). The only polling this loop does is the local simulator,
   // which is itself millis()-based, not a blocking delay().
