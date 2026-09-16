@@ -23,7 +23,7 @@
 // across them (this also gives the wall node an IP to POST from).
 const char* WIFI_SSID     = "kkkk";
 const char* WIFI_PASSWORD = "123456879";
-const char* DASHBOARD_URL = "http://192.168.1.50:5000/api/telemetry"; // set to the laptop's actual IP
+const char* DASHBOARD_URL = "http://10.177.169.223:5000/api/telemetry"; // laptop's WiFi IPv4 — update this if the laptop's IP changes
 const char* NODE_ID       = "WALL1";
 
 // The worker's wearable ESP32 — get this by reading "Wall MAC
@@ -36,7 +36,7 @@ const uint8_t WORKER_MAC[] = { 0x00, 0x70, 0x07, 0x26, 0xC3, 0x90 };
 
 // Set to false once a real wearable is sending real ESP-NOW packets —
 // leaving both on would feed the dashboard two "W1" sources at once.
-const bool SIMULATE_LOCAL_DATA = true;
+const bool SIMULATE_LOCAL_DATA = false;
 const char* SIM_WORKER_ID = "W1";
 const unsigned long SIM_STATUS_INTERVAL_MS = 2000;   // matches the "every ~2s" protocol recommendation
 const unsigned long SIM_FALL_INTERVAL_MS = 45000;    // simulate a fall roughly every 45s
