@@ -1,25 +1,32 @@
 #include <WiFi.h>
 #include <esp_now.h>
+#include <esp_wifi.h>
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 
 // ============================================================
 // SENSORA - WORKER ESP32
-// MPU6050 + FALL DETECTION + ESP-NOW
+// MPU6050 + FALL DETECTION + ESP-NOW ONLY -- no WiFi/internet
 // ESP32 Arduino Core 3.x compatible (wifi_tx_info_t send callback)
 // ============================================================
 
-// -------------------- WIFI ------------------------------------
+// -------------------- RADIO CHANNEL ----------------------------
 //
-// Must be the SAME network the wall node connects to in
-// wall_node.ino — ESP-NOW only reaches devices on the same WiFi
-// channel, and joining the router is the easiest way to guarantee
-// that. This board never needs an IP of its own for anything; it
-// only sends ESP-NOW unicasts to WALL_MAC below.
-
-const char* WIFI_SSID     = "shitstorm";
-const char* WIFI_PASSWORD = "boombox1";
+// This board never joins the router and never gets an IP -- it
+// talks ESP-NOW directly to WALL_MAC below, nothing else. ESP-NOW
+// only reaches devices on the same WiFi CHANNEL, though, so this
+// still has to match the channel the wall node ends up on (the
+// wall node does join the router, to reach the dashboard over
+// HTTP, and that assigns it a channel).
+//
+// Read the wall node's own boot log line "Connected. WiFi channel:
+// N" and put that number here. If the wall node's router ever
+// reassigns it a different channel (e.g. after a router reboot),
+// update this constant and reflash -- there's no way for this
+// board to discover the channel on its own without joining the
+// network, which is exactly what we're avoiding.
+const int WIFI_CHANNEL = 6;
 
 // -------------------- WORKER SETTINGS -----------------------
 
@@ -813,30 +820,27 @@ void setup() {
 
 
   // ==========================================================
-  // WIFI
+  // RADIO -- ESP-NOW ONLY, NO WIFI/INTERNET
   // ==========================================================
   //
-  // Joining the router (rather than just setting WIFI_STA mode)
-  // is what locks this board onto the same channel the wall node
-  // is on — without this, ESP-NOW frames sent to WALL_MAC may
-  // never arrive if the two boards end up on different channels.
+  // WIFI_STA mode is required to use the radio at all (ESP-NOW
+  // rides on the WiFi hardware), but WiFi.begin() is deliberately
+  // never called -- this board never associates with a router,
+  // never requests an IP, and never touches the internet. Instead
+  // esp_wifi_set_channel() pins the radio to WIFI_CHANNEL directly
+  // so it lands on the same channel as the wall node without ever
+  // joining its network.
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.disconnect(); // make sure no stale AP association survives a reset
 
-  Serial.print("Connecting to WiFi (to match the wall node's channel)");
-  unsigned long wifiStart = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 15000) {
-    Serial.print(".");
-    delay(250); // one-time boot connect, not the main loop
-  }
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("Connected. WiFi channel: ");
-    Serial.println(WiFi.channel());
+  esp_err_t channelResult = esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  if (channelResult == ESP_OK) {
+    Serial.print("Radio channel set to ");
+    Serial.println(WIFI_CHANNEL);
   } else {
-    Serial.println("[WARN] WiFi not connected — ESP-NOW likely won't reach the wall node if channels differ");
+    Serial.print("[ERROR] esp_wifi_set_channel failed: ");
+    Serial.println(channelResult);
   }
 
 
