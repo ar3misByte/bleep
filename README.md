@@ -28,6 +28,8 @@ The dashboard talks to hardware through a small relay server, not directly — t
    ```
 4. **Open the dashboard from the server, not the static file**: go to `http://<your-ip>:5000/` in a browser (on the same machine or anywhere else on the LAN). The page polls `/api/workers` and `/api/events` every 2 seconds — as soon as the wall node sends its first message, the page switches out of demo mode automatically: the worker roster, alert banner, and event log start showing real data, and the "Demo & Testing Controls" panel disables itself.
 
+**Don't have wearable hardware yet?** Flash [`firmware/wearable_fall_simulator.ino`](./firmware/wearable_fall_simulator.ino) to a second ESP32 instead — it stands in for the wearable, sending STATUS packets every 2s and a simulated fall roughly every 45s (auto-recovering 15s later), so you can test the wall node → server → dashboard pipeline with no accelerometer involved.
+
 **Why not just open `index.html` directly, or use the GitHub Pages copy?** Browsers block a page from fetching a plain-`http://` endpoint when the page itself was loaded over `https://` (GitHub Pages) or as a bare local file with no server behind it — the fetches to `/api/workers` fail silently and the page just stays in demo mode. Serving `index.html` from `server/app.py` (step 4) puts the page and the API on the same origin, which sidesteps this entirely. The hosted GitHub Pages copy is fine for showing the design, but it will never show live hardware data.
 
 ## Design source
