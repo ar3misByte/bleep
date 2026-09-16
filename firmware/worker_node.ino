@@ -13,19 +13,16 @@
 
 // -------------------- RADIO CHANNEL ----------------------------
 //
-// This board never joins the router and never gets an IP -- it
+// This board never joins any network and never gets an IP -- it
 // talks ESP-NOW directly to WALL_MAC below, nothing else. ESP-NOW
 // only reaches devices on the same WiFi CHANNEL, though, so this
-// still has to match the channel the wall node ends up on (the
-// wall node does join the router, to reach the dashboard over
-// HTTP, and that assigns it a channel).
+// still has to match wherever the wall node's radio actually is.
 //
-// Read the wall node's own boot log line "Connected. WiFi channel:
-// N" and put that number here. If the wall node's router ever
-// reassigns it a different channel (e.g. after a router reboot),
-// update this constant and reflash -- there's no way for this
-// board to discover the channel on its own without joining the
-// network, which is exactly what we're avoiding.
+// In the current peer-to-peer setup (wall_node.ino), the wall node
+// hosts its own SoftAP and its WIFI_CHANNEL constant is what decides
+// the channel outright -- there's no router assigning it anymore.
+// Keep this number identical to that file's WIFI_CHANNEL; if you
+// ever change one, change the other and reflash both.
 const int WIFI_CHANNEL = 6;
 
 // -------------------- WORKER SETTINGS -----------------------

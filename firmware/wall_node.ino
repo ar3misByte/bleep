@@ -1,43 +1,53 @@
-// Sensora — Wall Node (ESP32)
+// Sensora — Wall Node (ESP32), peer-to-peer edition
 //
-// Receives WorkerPacket over ESP-NOW from a worker's wearable ESP32,
-// converts it to the Sensora telemetry JSON envelope, and POSTs it to
-// the dashboard's Flask server (see server/app.py in this repo).
+// No router. No mobile hotspot. No internet. This board hosts its
+// OWN WiFi network (a SoftAP) so a laptop can connect to it directly,
+// receives WorkerPacket telemetry from a worker ESP32 over ESP-NOW,
+// stores it in memory, and serves the dashboard itself over that
+// same SoftAP -- entirely peer-to-peer between three devices (worker
+// ESP32 -> wall node ESP32 -> laptop browser), nothing else involved.
+//
+// This replaces the earlier design where the wall node joined a
+// router and POSTed telemetry to a Flask server on a laptop
+// (server/app.py in this repo still exists for that router-based
+// path, if you ever want it back -- this sketch does not need it).
 //
 // Requires: ESP32 Arduino core >= 2.0.0 (for the esp_now_recv_info_t
-// callback signature used below — older cores only pass a MAC address
-// and won't compile this file as-is).
+// callback signature used below).
 //
 // Library Manager: ArduinoJson (v6.x)
 
 #include <WiFi.h>
 #include <esp_now.h>
-#include <HTTPClient.h>
+#include <WebServer.h>
 #include <ArduinoJson.h>
 
 // ---------------------------------------------------------------------
 // EDIT THESE
 // ---------------------------------------------------------------------
-// Must match worker_node.ino's WIFI_SSID/WIFI_PASSWORD exactly — both
-// boards need to be on the same WiFi network for ESP-NOW to reach
-// across them (this also gives the wall node an IP to POST from).
-const char* WIFI_SSID     = "shitstorm";
-const char* WIFI_PASSWORD = "boombox1";
-const char* DASHBOARD_URL = "http://10.177.169.223:5000/api/telemetry"; // laptop's WiFi IPv4 — update this if the laptop's IP changes
-const char* NODE_ID       = "WALL1";
+// This is the network your laptop (or phone) connects to directly --
+// there is no router in this picture at all. WPA2 requires the
+// password to be at least 8 characters.
+const char* AP_SSID     = "Bleep-WallNode";
+const char* AP_PASSWORD = "bleepsafety";
 
-// How often to tell the dashboard "this wall node is alive," separate
-// from relaying worker telemetry — this is what lets the dashboard
-// show the wall node as online even during a quiet stretch with no
-// worker messages to forward.
-const unsigned long HEARTBEAT_INTERVAL_MS = 5000;
+// The radio channel this board's SoftAP runs on. worker_node.ino's
+// WIFI_CHANNEL must be set to this exact same number -- ESP-NOW only
+// reaches devices on the same channel, and since neither board joins
+// an external router anymore, nothing assigns this automatically.
+// Whoever hosts the AP (this board) is what decides the channel now,
+// which is actually simpler than the old router-assigned model: pick
+// a number here, put the same number in worker_node.ino, done.
+const int WIFI_CHANNEL = 6;
 
-// The worker's wearable ESP32 — get this by reading "Wall MAC
-// Address:" style output from WiFi.macAddress() on that board's own
-// Serial Monitor at boot. Receiving doesn't strictly require pairing
-// (ESP-NOW delivers to the registered callback from anyone in range,
-// paired or not), but adding it as a peer here leaves the door open
-// for the wall node to send something back to the worker later.
+const char* NODE_ID = "WALL1";
+
+// The worker's wearable ESP32 — read this off that board's own
+// "Worker MAC: ..." boot log. Receiving doesn't strictly require
+// pairing (ESP-NOW delivers to the registered callback from anyone
+// in range, paired or not), but adding it as a peer here leaves the
+// door open for the wall node to send something back to the worker
+// later.
 const uint8_t WORKER_MAC[] = { 0x00, 0x70, 0x07, 0x26, 0xC3, 0x90 };
 
 // Set to false once a real wearable is sending real ESP-NOW packets —
@@ -62,126 +72,340 @@ typedef struct __attribute__((packed)) {
   uint32_t seq;
 } WorkerPacket;
 
-bool wifiIsUp() {
-  return WiFi.status() == WL_CONNECTED;
+WebServer server(80);
+
+// ---------------------------------------------------------------------
+// IN-MEMORY STORE — replaces the Flask server's role entirely. There
+// is no wall-clock here (no internet means no NTP), so every stored
+// entry keeps a millis() timestamp and every API response computes
+// "ageMs" (elapsed time) fresh at request time. The dashboard never
+// needs an absolute time, only "how long ago" — see index.html /
+// server/app.py in this repo for the identical contract on the
+// router-based path.
+// ---------------------------------------------------------------------
+struct StoredWorker {
+  bool used;
+  char workerId[8];
+  char nodeId[8];
+  char msgType[10];
+  uint32_t seq;
+  bool haveRssi;
+  int rssi;
+  char riskState[16];
+  char hazardType[16];
+  float motionEnergy;
+  float secondsSinceMotion; // doubles as "secondsInactive" for DISTRESS
+  float motionEnergyAtTrigger;
+  unsigned long receivedAtMs;
+};
+const int MAX_WORKERS = 8;
+StoredWorker workersStore[MAX_WORKERS];
+
+struct StoredEvent {
+  char workerId[8];
+  char nodeId[8];
+  char msgType[10];
+  char riskState[16];
+  char hazardType[16];
+  unsigned long receivedAtMs;
+};
+const int MAX_EVENTS = 20;
+StoredEvent eventsStore[MAX_EVENTS];
+int eventWriteIdx = 0;
+int eventsFilled = 0;
+
+int findOrAllocWorker(const char* workerId) {
+  for (int i = 0; i < MAX_WORKERS; i++) {
+    if (workersStore[i].used && strcmp(workersStore[i].workerId, workerId) == 0) return i;
+  }
+  for (int i = 0; i < MAX_WORKERS; i++) {
+    if (!workersStore[i].used) return i;
+  }
+  return 0; // full — overwrite the oldest slot rather than drop the message
 }
 
-// Sends one JSON document to the dashboard. Never blocks on a dead
-// WiFi link — callers decide whether/how to retry. Returns the HTTP
-// status code (e.g. 200), or a negative HTTPClient error code if the
-// request itself never completed (bad URL, connection refused,
-// timeout, etc.) — logging this is what makes "nothing shows up on
-// the dashboard" debuggable instead of silent.
-int sendToDashboard(JsonDocument& doc) {
-  if (!wifiIsUp()) {
-    Serial.println("[HTTP] skipped — WiFi not connected");
-    return -1000;
+void pushEvent(const char* workerId, const char* nodeId, const char* msgType,
+               const char* riskState, const char* hazardType) {
+  StoredEvent& e = eventsStore[eventWriteIdx];
+  strncpy(e.workerId, workerId, sizeof(e.workerId) - 1); e.workerId[sizeof(e.workerId) - 1] = '\0';
+  strncpy(e.nodeId, nodeId, sizeof(e.nodeId) - 1); e.nodeId[sizeof(e.nodeId) - 1] = '\0';
+  strncpy(e.msgType, msgType, sizeof(e.msgType) - 1); e.msgType[sizeof(e.msgType) - 1] = '\0';
+  strncpy(e.riskState, riskState, sizeof(e.riskState) - 1); e.riskState[sizeof(e.riskState) - 1] = '\0';
+  strncpy(e.hazardType, hazardType, sizeof(e.hazardType) - 1); e.hazardType[sizeof(e.hazardType) - 1] = '\0';
+  e.receivedAtMs = millis();
+  eventWriteIdx = (eventWriteIdx + 1) % MAX_EVENTS;
+  if (eventsFilled < MAX_EVENTS) eventsFilled++;
+}
+
+void recordMessage(const char* workerId, const char* nodeId, uint8_t msgType, uint32_t seq,
+                    bool haveRssi, int rssi, const char* riskState, const char* hazardType,
+                    float motionEnergy, float secondsSinceMotion, float motionEnergyAtTrigger) {
+  int idx = findOrAllocWorker(workerId);
+  StoredWorker& w = workersStore[idx];
+  w.used = true;
+  strncpy(w.workerId, workerId, sizeof(w.workerId) - 1); w.workerId[sizeof(w.workerId) - 1] = '\0';
+  strncpy(w.nodeId, nodeId, sizeof(w.nodeId) - 1); w.nodeId[sizeof(w.nodeId) - 1] = '\0';
+  const char* msgTypeStr = msgType == 1 ? "DISTRESS" : "STATUS";
+  strncpy(w.msgType, msgTypeStr, sizeof(w.msgType) - 1); w.msgType[sizeof(w.msgType) - 1] = '\0';
+  w.seq = seq;
+  w.haveRssi = haveRssi;
+  w.rssi = rssi;
+  strncpy(w.riskState, riskState, sizeof(w.riskState) - 1); w.riskState[sizeof(w.riskState) - 1] = '\0';
+  strncpy(w.hazardType, hazardType, sizeof(w.hazardType) - 1); w.hazardType[sizeof(w.hazardType) - 1] = '\0';
+  w.motionEnergy = motionEnergy;
+  w.secondsSinceMotion = secondsSinceMotion;
+  w.motionEnergyAtTrigger = motionEnergyAtTrigger;
+  w.receivedAtMs = millis();
+
+  pushEvent(workerId, nodeId, msgTypeStr, riskState, hazardType);
+}
+
+// ---------------------------------------------------------------------
+// EMBEDDED DASHBOARD — served directly from this board's flash, no
+// external CSS/font/JS dependency, because the laptop viewing it may
+// have no internet at all (it's on this board's isolated network).
+// Same ageMs-based API contract as index.html / server/app.py, so the
+// same mental model applies whichever path you use.
+// ---------------------------------------------------------------------
+const char INDEX_HTML[] PROGMEM = R"rawliteral(
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bleep - Wall Node</title>
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --bg:#f5f7f5; --surface:#ffffff; --border:#e3e6e2;
+    --text:#14181f; --text-muted:#6b7280;
+    --accent:#0f766e; --accent-soft:#e3f2ef;
+    --good:#0ca30c; --critical:#d03b3b; --offline:#8b93a0; --waiting:#b45309;
+  }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--text); background:var(--bg); }
+  .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+  .topbar { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; background:var(--surface); border-bottom:1px solid var(--border); flex-wrap:wrap; gap:8px; }
+  .content { padding:20px; max-width:900px; margin:0 auto; display:flex; flex-direction:column; gap:20px; }
+  .status-flag { display:flex; align-items:center; gap:6px; border-radius:4px; padding:3px 9px; font-size:11px; font-weight:600; letter-spacing:0.03em; }
+  .status-flag.live { background:#e3f2ef; border:1px solid #bfe3de; color:var(--accent); }
+  .status-flag.waiting { background:#fbf1e0; border:1px solid #e8d3a3; color:var(--waiting); }
+  .status-flag.down { background:#f1e4e4; border:1px solid #e0bcbc; color:var(--critical); }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:10px; }
+  .card-head { padding:12px 16px; border-bottom:1px solid var(--border); font-weight:700; font-size:14px; }
+  .empty-state { padding:20px 16px; text-align:center; font-size:13px; color:var(--text-muted); }
+  .stat-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+  .stat-label { font-size:11px; color:var(--text-muted); margin-bottom:8px; }
+  .stat-value { font-size:22px; font-weight:700; }
+  .grid-4 { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+  .grid-2 { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .worker-card { border:1px solid #e2e6ea; border-radius:10px; padding:14px; background:var(--surface); }
+  .worker-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .status-pill { font-size:10px; font-weight:700; letter-spacing:0.04em; color:#fff; border-radius:4px; padding:3px 8px; }
+  .worker-metrics { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; margin-bottom:10px; font-size:13px; }
+  .metric-label { font-size:10px; color:var(--text-muted); }
+  .progress-track { height:6px; background:#eceeec; border-radius:3px; overflow:hidden; }
+  .progress-fill { height:100%; border-radius:3px; }
+  .event-row { display:flex; gap:8px; padding:7px 0; font-size:12.5px; align-items:baseline; }
+  .event-dot { width:6px; height:6px; border-radius:50%; margin-top:3px; flex-shrink:0; }
+  .event-time { color:var(--text-muted); flex-shrink:0; }
+  .alert-banner { display:none; align-items:center; gap:10px; background:#fbe9e9; border:1px solid #edb3b3; border-left:4px solid var(--critical); border-radius:6px; padding:12px 16px; font-weight:700; color:#7a1f1f; }
+  .alert-banner.visible { display:flex; }
+  @media (max-width:640px) { .grid-4, .grid-2 { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <strong>Bleep &middot; Wall Node WALL1</strong>
+  <div class="status-flag waiting" id="connection-flag"><span id="connection-flag-text">CONNECTING...</span></div>
+</div>
+<div class="content">
+  <div class="grid-4">
+    <div class="stat-card"><div class="stat-label">WALL NODES ONLINE</div><div class="mono stat-value" id="stat-nodes">-</div></div>
+    <div class="stat-card"><div class="stat-label">WORKERS REPORTING</div><div class="mono stat-value" id="stat-workers">-</div></div>
+    <div class="stat-card"><div class="stat-label">ACTIVE ALERTS</div><div class="mono stat-value" id="stat-alerts">-</div></div>
+    <div class="stat-card"><div class="stat-label">LAST UPDATE</div><div class="mono stat-value" id="stat-last-update" style="font-size:15px;">-</div></div>
+  </div>
+  <div class="alert-banner" id="alert-banner"><span id="alert-text"></span></div>
+  <div>
+    <h3 style="margin:0 0 10px; font-size:14px;">Worker Roster</h3>
+    <div class="grid-2" id="roster-grid"><div class="card" style="grid-column:1/-1;"><div class="empty-state">Waiting for a worker message...</div></div></div>
+  </div>
+  <div class="card">
+    <div class="card-head">Event Log</div>
+    <div style="max-height:300px; overflow-y:auto;" id="event-log-wrap">
+      <div class="empty-state" id="event-log-empty">No events yet.</div>
+      <div id="event-log-list" style="padding:0 16px;"></div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var POLL_MS=2000, STALE_MS=15000;
+  function fmtAge(ms){ if(ms==null) return '-'; if(ms<1000) return 'just now'; var s=Math.round(ms/1000); if(s<60) return s+'s ago'; return Math.round(s/60)+'m ago'; }
+  function statusFromMsg(msg){ if(msg.ageMs>STALE_MS) return 'OFFLINE'; var rs=(msg.payload&&msg.payload.riskState)||''; if(msg.msgType==='DISTRESS'||rs==='FALL_SUSPECTED') return 'FALL_SUSPECTED'; return 'OK'; }
+  function setFlag(state,text){ var f=document.getElementById('connection-flag'); f.className='status-flag '+state; document.getElementById('connection-flag-text').textContent=text; }
+
+  function renderRoster(workersObj){
+    var ids=Object.keys(workersObj).sort();
+    var grid=document.getElementById('roster-grid');
+    if(ids.length===0){ grid.innerHTML='<div class="card" style="grid-column:1/-1;"><div class="empty-state">Waiting for a worker message...</div></div>'; return {alertNames:[]}; }
+    grid.innerHTML=''; var alertNames=[];
+    ids.forEach(function(id){
+      var msg=workersObj[id]; var status=statusFromMsg(msg);
+      if(status==='FALL_SUSPECTED') alertNames.push(id);
+      var pillColor= status==='FALL_SUSPECTED' ? 'var(--critical)' : (status==='OFFLINE' ? 'var(--offline)' : 'var(--good)');
+      var payload=msg.payload||{};
+      var motion= payload.motionEnergy!=null ? payload.motionEnergy.toFixed(2)+' g' : '-';
+      var rssi= msg.espnowRssi!=null ? msg.espnowRssi+' dBm' : '-';
+      var seq= msg.seq!=null ? msg.seq : '-';
+      var secsInactive= payload.secondsInactive!=null?payload.secondsInactive:payload.secondsSinceMotion;
+      var timerLabel= secsInactive!=null? (Math.round(secsInactive)+'s / 20s') : '- / 20s';
+      var fillPct= secsInactive!=null? Math.min(100, Math.round((secsInactive/20)*100)) : 0;
+      var fillColor= status==='FALL_SUSPECTED' ? 'var(--critical)' : 'var(--accent)';
+      var card=document.createElement('div');
+      card.className='worker-card'; card.style.opacity= status==='OFFLINE'?'0.7':'1';
+      card.innerHTML=
+        '<div class="worker-head"><strong>'+id+'</strong><span class="status-pill" style="background:'+pillColor+';">'+status.replace('_',' ')+'</span></div>'+
+        '<div class="worker-metrics">'+
+          '<div><div class="metric-label">Motion Energy</div><div class="mono">'+motion+'</div></div>'+
+          '<div><div class="metric-label">RSSI</div><div class="mono">'+rssi+'</div></div>'+
+          '<div><div class="metric-label">Battery</div><div class="mono">-</div></div>'+
+          '<div><div class="metric-label">Last Seq</div><div class="mono">'+seq+'</div></div>'+
+        '</div>'+
+        '<div><div style="display:flex; justify-content:space-between; font-size:10.5px; color:var(--text-muted); margin-bottom:3px;"><span>Inactivity Timer</span><span class="mono">'+timerLabel+'</span></div>'+
+        '<div class="progress-track"><div class="progress-fill" style="width:'+fillPct+'%; background:'+fillColor+';"></div></div></div>';
+      grid.appendChild(card);
+    });
+    return {alertNames:alertNames};
   }
 
-  HTTPClient http;
-  http.begin(DASHBOARD_URL);
-  http.addHeader("Content-Type", "application/json");
-
-  String body;
-  serializeJson(doc, body);
-  int code = http.POST(body);
-  http.end(); // always release the connection, success or failure
-
-  if (code > 0) {
-    Serial.printf("[HTTP] POST %s -> %d\n", DASHBOARD_URL, code);
-  } else {
-    Serial.printf("[HTTP] POST %s FAILED, client error %d (%s)\n",
-                  DASHBOARD_URL, code, HTTPClient::errorToString(code).c_str());
+  function renderEvents(list){
+    var logEl=document.getElementById('event-log-list'); var emptyEl=document.getElementById('event-log-empty');
+    if(!list||list.length===0){ emptyEl.style.display=''; logEl.innerHTML=''; return; }
+    emptyEl.style.display='none'; logEl.innerHTML='';
+    list.forEach(function(msg){
+      var dotColor= msg.msgType==='DISTRESS' ? 'var(--critical)' : 'var(--good)';
+      var payload=msg.payload||{}; var detail=payload.riskState||payload.hazardType||'';
+      var row=document.createElement('div'); row.className='event-row';
+      row.innerHTML='<span class="event-dot" style="background:'+dotColor+';"></span><span class="mono event-time">'+fmtAge(msg.ageMs)+'</span><span>'+msg.workerId+' ('+msg.nodeId+') &middot; '+msg.msgType+' &middot; '+detail+'</span>';
+      logEl.appendChild(row);
+    });
   }
 
-  return code;
-}
+  function poll(){
+    Promise.all([
+      fetch('/api/workers').then(function(r){return r.ok?r.json():Promise.reject();}),
+      fetch('/api/events?limit=30').then(function(r){return r.ok?r.json():Promise.reject();}),
+      fetch('/api/nodes').then(function(r){return r.ok?r.json():Promise.reject();})
+    ]).then(function(results){
+      var allWorkers=results[0], eventsList=results[1], allNodes=results[2];
+      var summary=renderRoster(allWorkers);
+      renderEvents(eventsList);
 
-// Same host/port as DASHBOARD_URL, just a different path — derived at
-// runtime so there's only one IP to edit when the laptop's IP changes.
-String heartbeatUrl() {
-  String url = String(DASHBOARD_URL);
-  int idx = url.indexOf("/api/telemetry");
-  if (idx == -1) return url; // shouldn't happen; DASHBOARD_URL always ends in /api/telemetry
-  return url.substring(0, idx) + "/api/node-heartbeat";
-}
+      var nodeIds=Object.keys(allNodes);
+      var onlineNodeCount= nodeIds.filter(function(id){ return allNodes[id].ageMs<=STALE_MS; }).length;
+      document.getElementById('stat-nodes').textContent=String(onlineNodeCount);
 
-// A dropped heartbeat isn't a big deal — the next one follows in
-// HEARTBEAT_INTERVAL_MS, so this only logs on failure to avoid
-// spamming Serial every few seconds when everything is fine.
-void sendHeartbeat() {
-  if (!wifiIsUp()) return;
+      var workerCount=Object.keys(allWorkers).length;
+      document.getElementById('stat-workers').textContent=String(workerCount);
+      document.getElementById('stat-alerts').textContent=String(summary.alertNames.length);
 
-  StaticJsonDocument<96> doc;
-  doc["nodeId"] = NODE_ID;
-  doc["timestamp"] = millis();
+      var banner=document.getElementById('alert-banner');
+      banner.classList.toggle('visible', summary.alertNames.length>0);
+      if(summary.alertNames.length>0){
+        document.getElementById('alert-text').textContent='FALL SUSPECTED - Worker '+summary.alertNames.join(', ')+' - immediate response required';
+      }
 
-  HTTPClient http;
-  http.begin(heartbeatUrl());
-  http.addHeader("Content-Type", "application/json");
-  String body;
-  serializeJson(doc, body);
-  int code = http.POST(body);
-  http.end();
+      var newestAgeMs=null;
+      Object.keys(allWorkers).forEach(function(id){ var a=allWorkers[id].ageMs; if(newestAgeMs==null||a<newestAgeMs) newestAgeMs=a; });
+      document.getElementById('stat-last-update').textContent=fmtAge(newestAgeMs);
 
-  if (code != 200) {
-    Serial.printf("[HEARTBEAT] POST failed, code %d\n", code);
+      if(onlineNodeCount===0){ setFlag('down','WALL NODE OFFLINE'); }
+      else if(workerCount===0){ setFlag('waiting','NODE OK - NO WORKER DATA'); }
+      else if(newestAgeMs!=null && newestAgeMs>STALE_MS){ setFlag('waiting','NODE OK - STALE WORKER DATA'); }
+      else { setFlag('live','LIVE'); }
+    }).catch(function(){
+      setFlag('down','CONNECTION LOST');
+    });
   }
+  poll(); setInterval(poll, POLL_MS);
+})();
+</script>
+</body>
+</html>
+)rawliteral";
+
+// ---------------------------------------------------------------------
+// HTTP HANDLERS
+// ---------------------------------------------------------------------
+void handleRoot() {
+  server.send(200, "text/html", INDEX_HTML);
 }
 
-void sendStatus(const WorkerPacket& pkt, int rssi, bool haveRssi) {
-  StaticJsonDocument<256> doc;
-  doc["schemaVersion"] = 1;
-  doc["msgType"] = "STATUS";
-  doc["workerId"] = pkt.workerId;
-  doc["nodeId"] = NODE_ID;
-  doc["seq"] = pkt.seq;
-  if (haveRssi) doc["espnowRssi"] = rssi; else doc["espnowRssi"] = nullptr;
-  doc["timestamp"] = millis();
-
-  JsonObject payload = doc.createNestedObject("payload");
-  payload["riskState"] = pkt.riskState;
-  payload["motionEnergy"] = pkt.motionEnergy;
-  payload["secondsSinceMotion"] = pkt.secondsSinceMotion;
-  payload["battery"] = nullptr;
-
-  serializeJson(doc, Serial);
-  Serial.println();
-
-  // STATUS is not retried on failure — the next one follows in a few
-  // seconds, and retrying every STATUS send would stall the main loop.
-  sendToDashboard(doc);
-}
-
-void sendDistress(const WorkerPacket& pkt, int rssi, bool haveRssi) {
-  StaticJsonDocument<256> doc;
-  doc["schemaVersion"] = 1;
-  doc["msgType"] = "DISTRESS";
-  doc["workerId"] = pkt.workerId;
-  doc["nodeId"] = NODE_ID;
-  doc["seq"] = pkt.seq;
-  if (haveRssi) doc["espnowRssi"] = rssi; else doc["espnowRssi"] = nullptr;
-  doc["timestamp"] = millis();
-
-  JsonObject payload = doc.createNestedObject("payload");
-  payload["hazardType"] = pkt.hazardType;
-  payload["riskState"] = pkt.riskState;
-  payload["secondsInactive"] = pkt.secondsSinceMotion;
-  payload["motionEnergyAtTrigger"] = pkt.motionEnergyAtTrigger;
-  payload["battery"] = nullptr;
-
-  serializeJson(doc, Serial);
-  Serial.println();
-
-  // A dropped DISTRESS message is not acceptable — retry a few times.
-  // The short delay() here is the one deliberate exception to the
-  // "no blocking delay()" rule: it's on the DISTRESS path only, not
-  // the routine ESP-NOW receive path.
-  for (int attempt = 0; attempt < 3; attempt++) {
-    if (sendToDashboard(doc) == 200) return;
-    delay(300);
+void handleApiWorkers() {
+  DynamicJsonDocument doc(3072);
+  JsonObject root = doc.to<JsonObject>();
+  unsigned long now = millis();
+  for (int i = 0; i < MAX_WORKERS; i++) {
+    if (!workersStore[i].used) continue;
+    StoredWorker& w = workersStore[i];
+    JsonObject o = root.createNestedObject(w.workerId);
+    o["workerId"] = w.workerId;
+    o["nodeId"] = w.nodeId;
+    o["msgType"] = w.msgType;
+    o["seq"] = w.seq;
+    if (w.haveRssi) o["espnowRssi"] = w.rssi; else o["espnowRssi"] = nullptr;
+    o["ageMs"] = now - w.receivedAtMs;
+    JsonObject payload = o.createNestedObject("payload");
+    payload["riskState"] = w.riskState;
+    payload["hazardType"] = w.hazardType;
+    payload["motionEnergy"] = w.motionEnergy;
+    payload["secondsSinceMotion"] = w.secondsSinceMotion;
+    payload["secondsInactive"] = w.secondsSinceMotion;
+    payload["motionEnergyAtTrigger"] = w.motionEnergyAtTrigger;
+    payload["battery"] = nullptr;
   }
-  Serial.println("[WARN] DISTRESS POST failed after 3 attempts");
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+void handleApiEvents() {
+  int limit = 30;
+  if (server.hasArg("limit")) limit = server.arg("limit").toInt();
+
+  DynamicJsonDocument doc(4096);
+  JsonArray arr = doc.to<JsonArray>();
+  unsigned long now = millis();
+  int n = eventsFilled < limit ? eventsFilled : limit;
+  for (int k = 0; k < n; k++) {
+    int idx = (eventWriteIdx - 1 - k + MAX_EVENTS * 2) % MAX_EVENTS;
+    StoredEvent& e = eventsStore[idx];
+    JsonObject o = arr.createNestedObject();
+    o["workerId"] = e.workerId;
+    o["nodeId"] = e.nodeId;
+    o["msgType"] = e.msgType;
+    o["ageMs"] = now - e.receivedAtMs;
+    JsonObject payload = o.createNestedObject("payload");
+    payload["riskState"] = e.riskState;
+    payload["hazardType"] = e.hazardType;
+  }
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+void handleApiNodes() {
+  // There's exactly one node here, and it's the one you're talking
+  // to -- if this handler ran at all, this node is online right now.
+  DynamicJsonDocument doc(128);
+  JsonObject root = doc.to<JsonObject>();
+  JsonObject o = root.createNestedObject(NODE_ID);
+  o["nodeId"] = NODE_ID;
+  o["ageMs"] = 0;
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
 }
 
 void onDataReceive(const esp_now_recv_info_t* info, const uint8_t* incomingData, int len) {
@@ -267,22 +491,18 @@ void onDataReceive(const esp_now_recv_info_t* info, const uint8_t* incomingData,
 
   Serial.println("==========================================");
 
-  // This is the part the standalone receiver sketch doesn't do —
-  // forward whatever we just printed on to the actual dashboard.
-  if (pkt.msgType == 1) {
-    sendDistress(pkt, rssi, haveRssi);
-  } else {
-    sendStatus(pkt, rssi, haveRssi);
-  }
+  // Store it directly -- no HTTP POST anywhere, this board IS the
+  // server now.
+  recordMessage(pkt.workerId, NODE_ID, pkt.msgType, pkt.seq, haveRssi, rssi,
+                pkt.riskState, pkt.hazardType, pkt.motionEnergy,
+                pkt.secondsSinceMotion, pkt.motionEnergyAtTrigger);
 }
 
 // ---------------------------------------------------------------------
 // LOCAL FALL SIMULATION — generates dummy WorkerPackets on a timer and
-// feeds them through the exact same sendStatus()/sendDistress() path
-// a real ESP-NOW packet would use, so the dashboard can't tell the
-// difference. haveRssi is false throughout: there's no real
-// over-the-air reception happening, so we send null rather than a
-// faked signal strength.
+// feeds them straight into recordMessage(), the exact same path a
+// real ESP-NOW packet would use, so the dashboard can't tell the
+// difference.
 // ---------------------------------------------------------------------
 uint32_t simSeqCounter = 0;
 unsigned long lastSimStatusMs = 0;
@@ -290,30 +510,17 @@ unsigned long lastSimFallMs = 0;
 bool simRecoveryPending = false;
 unsigned long simRecoveryDueMs = 0;
 
-unsigned long lastHeartbeatMs = 0;
-
 void sendSimulatedStatus() {
-  WorkerPacket pkt = {};
-  strncpy(pkt.workerId, SIM_WORKER_ID, sizeof(pkt.workerId) - 1);
-  pkt.msgType = 0;
-  strncpy(pkt.riskState, "OK", sizeof(pkt.riskState) - 1);
-  pkt.motionEnergy = 0.30f + (random(0, 40) / 100.0f); // dummy "normal movement", 0.30-0.70 g
-  pkt.secondsSinceMotion = 0;
-  pkt.seq = simSeqCounter++;
-  sendStatus(pkt, 0, false);
+  float motionEnergy = 0.30f + (random(0, 40) / 100.0f); // dummy "normal movement", 0.30-0.70 g
+  recordMessage(SIM_WORKER_ID, NODE_ID, 0, simSeqCounter++, false, 0, "OK", "", motionEnergy, 0, 0);
 }
 
 void sendSimulatedFall() {
   Serial.println("[SIM] *** simulating a fall now ***");
-  WorkerPacket pkt = {};
-  strncpy(pkt.workerId, SIM_WORKER_ID, sizeof(pkt.workerId) - 1);
-  pkt.msgType = 1;
-  strncpy(pkt.riskState, "FALL_SUSPECTED", sizeof(pkt.riskState) - 1);
-  strncpy(pkt.hazardType, "FALL_SUSPECTED", sizeof(pkt.hazardType) - 1);
-  pkt.secondsSinceMotion = 25.0f + (random(0, 1500) / 100.0f); // ~25-40s inactive
-  pkt.motionEnergyAtTrigger = 0.10f + (random(0, 25) / 100.0f); // low residual motion
-  pkt.seq = simSeqCounter++;
-  sendDistress(pkt, 0, false);
+  float secondsInactive = 25.0f + (random(0, 1500) / 100.0f); // ~25-40s inactive
+  float motionAtTrigger = 0.10f + (random(0, 25) / 100.0f);    // low residual motion
+  recordMessage(SIM_WORKER_ID, NODE_ID, 1, simSeqCounter++, false, 0,
+                "FALL_SUSPECTED", "FALL_SUSPECTED", 0, secondsInactive, motionAtTrigger);
 }
 
 void runLocalSimulation() {
@@ -343,26 +550,17 @@ void setup() {
   delay(200);
   randomSeed(analogRead(0));
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  Serial.print("Connecting to WiFi");
-  uint32_t startAttempt = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 15000) {
-    Serial.print(".");
-    delay(250); // acceptable here: one-time boot connect, not the main loop
-  }
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("WiFi connected, IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("[WARN] WiFi not connected yet — will keep retrying via wifiIsUp() checks");
-  }
-
-  Serial.print("Wall MAC Address: ");
-  Serial.println(WiFi.macAddress());
+  // AP_STA: AP so the laptop can join directly, STA alongside it
+  // because that's the combination ESP-NOW is most reliably tested
+  // against. This board never calls WiFi.begin() and never joins
+  // anyone else's network.
+  WiFi.mode(WIFI_AP_STA);
+  bool apOk = WiFi.softAP(AP_SSID, AP_PASSWORD, WIFI_CHANNEL);
+  Serial.println(apOk ? "SoftAP started." : "[ERROR] SoftAP failed to start.");
+  Serial.print("Network name: ");
+  Serial.println(AP_SSID);
+  Serial.print("Connect your laptop to it, then browse to: http://");
+  Serial.println(WiFi.softAPIP());
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("[ERROR] esp_now_init failed");
@@ -372,7 +570,7 @@ void setup() {
 
   esp_now_peer_info_t workerPeer = {};
   memcpy(workerPeer.peer_addr, WORKER_MAC, 6);
-  workerPeer.channel = 0; // use current WiFi channel
+  workerPeer.channel = WIFI_CHANNEL;
   workerPeer.encrypt = false;
   esp_err_t peerResult = esp_now_add_peer(&workerPeer);
   if (peerResult == ESP_OK) {
@@ -384,12 +582,12 @@ void setup() {
     Serial.println(peerResult);
   }
 
-  Serial.print("Posting telemetry to: ");
-  Serial.println(DASHBOARD_URL);
-  if (String(DASHBOARD_URL).indexOf("192.168.1.50") != -1) {
-    Serial.println("[WARN] DASHBOARD_URL still looks like the placeholder IP — "
-                    "edit it at the top of this file to your dashboard laptop's actual IP.");
-  }
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/api/workers", HTTP_GET, handleApiWorkers);
+  server.on("/api/events", HTTP_GET, handleApiEvents);
+  server.on("/api/nodes", HTTP_GET, handleApiNodes);
+  server.begin();
+  Serial.println("Web server started on port 80.");
 
   if (SIMULATE_LOCAL_DATA) {
     Serial.println("[SIM] Local fall simulation ENABLED — sending dummy STATUS/DISTRESS");
@@ -400,25 +598,17 @@ void setup() {
     lastSimFallMs = now;
   }
 
-  lastHeartbeatMs = millis();
-  sendHeartbeat(); // announce presence immediately at boot, don't wait for the first interval
-
   Serial.println("Wall node ready.");
 }
 
 void loop() {
-  // ESP-NOW delivery (real hardware) is interrupt-driven via
-  // onDataReceive() and needs nothing here. WiFi reconnection is handled
-  // by the core's built-in auto-reconnect (on by default in WIFI_STA
-  // mode). The only polling this loop does is the local simulator and
-  // the heartbeat below, both millis()-based, not blocking delay().
+  // ESP-NOW delivery is interrupt-driven via onDataReceive() and
+  // needs nothing here. server.handleClient() is what actually
+  // services dashboard requests -- it must run every loop iteration,
+  // not on a timer, or the browser will see laggy/dropped requests.
+  server.handleClient();
+
   if (SIMULATE_LOCAL_DATA) {
     runLocalSimulation();
-  }
-
-  unsigned long now = millis();
-  if (now - lastHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {
-    lastHeartbeatMs = now;
-    sendHeartbeat();
   }
 }

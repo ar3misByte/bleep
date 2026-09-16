@@ -106,7 +106,6 @@
         <div class="status-flag waiting" id="connection-flag">
           <span class="mono" id="connection-flag-text">CONNECTING...</span>
         </div>
-        <span class="mono" id="topbar-clock" style="color:var(--text-muted); font-size:13px;">--:--:--</span>
       </div>
     </div>
 
@@ -178,14 +177,22 @@
   var lastPollOk = false;
   var allWorkers = {};
 
-  function pad(n) { return String(n).padStart(2, '0'); }
-  function fmtLocalClock(d) {
-    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  // Every age comes from the server as "ageMs" -- milliseconds
+  // elapsed since that message/heartbeat arrived, computed fresh on
+  // every response. Nothing here ever reads or compares an absolute
+  // clock time: a wall node with no internet has no way to sync a
+  // real clock (no NTP), so relative age is the only honest signal
+  // to build "is this stale?" and "how long ago?" on.
+  function fmtAge(ms) {
+    if (ms == null) return '—';
+    if (ms < 1000) return 'just now';
+    var s = Math.round(ms / 1000);
+    if (s < 60) return s + 's ago';
+    return Math.round(s / 60) + 'm ago';
   }
 
-  function statusFromWorkerMsg(msg, now) {
-    var age = now - new Date(msg.serverReceivedAt).getTime();
-    if (age > STALE_MS) return 'OFFLINE';
+  function statusFromWorkerMsg(msg) {
+    if (msg.ageMs > STALE_MS) return 'OFFLINE';
     var riskState = (msg.payload && msg.payload.riskState) || '';
     if (msg.msgType === 'DISTRESS' || riskState === 'FALL_SUSPECTED') return 'FALL_SUSPECTED';
     return 'OK';
@@ -203,10 +210,8 @@
   }
 
   function renderRoster(workersObj) {
-    var now = Date.now();
     var ids = Object.keys(workersObj).sort();
     var grid = document.getElementById('roster-grid');
-    var emptyMsg = document.getElementById('roster-empty');
 
     if (ids.length === 0) {
       grid.innerHTML = '<div class="card" style="grid-column: 1 / -1;"><div class="empty-state" id="roster-empty">Waiting for the wall node to relay a message from worker_node.ino...</div></div>';
@@ -218,7 +223,7 @@
 
     ids.forEach(function (id) {
       var msg = workersObj[id];
-      var status = statusFromWorkerMsg(msg, now);
+      var status = statusFromWorkerMsg(msg);
       if (status === 'FALL_SUSPECTED') alertNames.push(id);
 
       var pillColor = status === 'FALL_SUSPECTED' ? 'var(--critical)' : (status === 'OFFLINE' ? 'var(--offline)' : 'var(--good)');
@@ -277,7 +282,7 @@
       row.className = 'event-row';
       row.innerHTML =
         '<span class="event-dot" style="background:' + dotColor + ';"></span>' +
-        '<span class="mono event-time">' + fmtLocalClock(new Date(msg.serverReceivedAt)) + '</span>' +
+        '<span class="mono event-time">' + fmtAge(msg.ageMs) + '</span>' +
         '<span class="event-text">' + msg.workerId + ' (' + msg.nodeId + ') · ' + msg.msgType + ' · ' + detail + '</span>';
       logEl.appendChild(row);
     });
@@ -312,10 +317,9 @@
       applyFilter();
       renderEvents(eventsList);
 
-      var now = Date.now();
       var nodeIds = Object.keys(allNodes);
       var onlineNodeCount = nodeIds.filter(function (id) {
-        return (now - new Date(allNodes[id].lastSeenAt).getTime()) <= NODE_STALE_MS;
+        return allNodes[id].ageMs <= NODE_STALE_MS;
       }).length;
       document.getElementById('stat-nodes').textContent = String(onlineNodeCount);
       document.getElementById('stat-nodes').style.color = onlineNodeCount > 0 ? 'var(--good)' : 'var(--critical)';
@@ -332,12 +336,12 @@
           'FALL SUSPECTED — Worker ' + summary.alertNames.join(', ') + ' — immediate response required';
       }
 
-      var newest = null;
+      var newestAgeMs = null;
       Object.keys(allWorkers).forEach(function (id) {
-        var t = new Date(allWorkers[id].serverReceivedAt);
-        if (!newest || t > newest) newest = t;
+        var a = allWorkers[id].ageMs;
+        if (newestAgeMs == null || a < newestAgeMs) newestAgeMs = a;
       });
-      document.getElementById('stat-last-update').textContent = newest ? fmtLocalClock(newest) : '—';
+      document.getElementById('stat-last-update').textContent = fmtAge(newestAgeMs);
 
       // Wall-node connectivity now comes from its own heartbeat
       // (/api/nodes), not from whether a worker happens to be
@@ -349,7 +353,7 @@
       } else if (workerCount === 0) {
         setConnectionFlag('waiting', 'NODE OK · NO WORKER DATA');
         setWallNodeStatus('var(--good)', 'Wall Node · Connected (no worker yet)');
-      } else if (newest && (now - newest.getTime()) > STALE_MS) {
+      } else if (newestAgeMs != null && newestAgeMs > STALE_MS) {
         setConnectionFlag('waiting', 'NODE OK · STALE WORKER DATA');
         setWallNodeStatus('var(--good)', 'Wall Node · Connected');
       } else {
@@ -366,10 +370,6 @@
       document.getElementById('stat-nodes').style.color = 'var(--text)';
     });
   }
-
-  setInterval(function () {
-    document.getElementById('topbar-clock').textContent = fmtLocalClock(new Date());
-  }, 1000);
 
   poll();
   setInterval(poll, POLL_MS);
