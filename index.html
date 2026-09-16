@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bleep — Dashboard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Atkinson+Hyperlegible:wght@700&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --bg:#f5f7f5; --surface:#ffffff; --border:#e3e6e2;
+    --text:#14181f; --text-muted:#6b7280;
+    --sidebar-bg:#12161d; --sidebar-text:#aab1bf; --sidebar-active-bg:#1f2733;
+    --accent:#0f766e; --accent-soft:#e3f2ef;
+    --trend-up:#0f766e; --trend-down:#b45309;
+    --good:#0ca30c; --critical:#d03b3b; --offline:#8b93a0;
+    --c1:#0f766e; --c2:#4338ca; --c3:#b45309; --c4:#9333ea; --c5:#475569;
+  }
+  body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; color: var(--text); background: var(--bg); }
+  a { color: var(--accent); } a:hover { color: #0b5951; }
+  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  .heading { font-family: 'Space Grotesk', system-ui, sans-serif; }
+  button { font-family: inherit; }
+  button:hover { filter: brightness(0.95); }
+  button:active { filter: brightness(0.88); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #d3d9d2; border-radius: 4px; }
+
+  .app-shell { display: flex; min-height: 100vh; }
+  .sidebar { width: 240px; flex-shrink: 0; background: var(--sidebar-bg); display: flex; flex-direction: column; padding: 20px 14px; }
+  .sidebar-brand { display: flex; align-items: center; gap: 9px; padding: 4px 8px 22px; }
+  .sidebar-search { display: flex; align-items: center; gap: 8px; background: #1b212b; border: 1px solid #2a3240; border-radius: 8px; padding: 9px 11px; margin-bottom: 20px; }
+  .nav-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: 7px; color: #aab1bf; font-size: 13px; text-decoration: none; }
+  .nav-item svg { stroke: #aab1bf; flex-shrink: 0; }
+  .nav-item.active { background: var(--sidebar-active-bg); color: #ffffff; font-weight: 600; }
+  .nav-item.active svg { stroke: #ffffff; }
+  .nav-divider { height: 1px; background: #242c38; margin: 10px 4px; }
+
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; height: 60px; padding: 0 28px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .sim-flag { display: flex; align-items: center; gap: 6px; background: #fbf1e0; border: 1px solid #e8d3a3; border-radius: 4px; padding: 3px 9px; }
+  .content { display: flex; flex-direction: column; gap: 26px; padding: 26px 28px 60px; max-width: 1520px; }
+
+  .section-divider { height: 1px; background: var(--border); margin: 6px 0; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+  .card-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); gap: 12px; }
+  .card-title { margin: 0; font-size: 14px; font-weight: 700; color: var(--text); }
+  .card-sub { margin: 2px 0 0; font-size: 11.5px; color: var(--text-muted); }
+  .card-body { padding: 18px; }
+  .view-all { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none; flex-shrink: 0; }
+
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .stat-label { font-size: 12px; font-weight: 500; color: var(--text-muted); }
+  .stat-value-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .stat-value { font-size: 24px; font-weight: 600; color: var(--text); }
+  .trend { display: flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; border-radius: 12px; padding: 3px 7px; flex-shrink: 0; }
+  .trend-up { color: var(--trend-up); background: var(--accent-soft); }
+  .trend-down { color: var(--trend-down); background: #fbeee0; }
+
+  .legend-chip { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); }
+  .legend-swatch { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
+  .status-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .status-row:last-child { border-bottom: none; }
+  .status-left { display: flex; align-items: center; gap: 9px; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  .progress-track { height: 7px; background: #eceeec; border-radius: 4px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 4px; }
+
+  .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+  .grid-5 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+
+  .worker-card { border-width: 1px; border-style: solid; border-radius: 10px; padding: 18px; background: var(--surface); }
+  .worker-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .status-pill { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: #ffffff; border-radius: 4px; padding: 4px 9px; font-family: 'Space Grotesk', sans-serif; }
+  .worker-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin-bottom: 14px; }
+  .metric-label { font-size: 11px; color: var(--text-muted); }
+  .metric-value { font-size: 14px; }
+
+  .event-row { display: flex; align-items: baseline; gap: 10px; padding: 9px 0; }
+  .event-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+  .event-time { font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+  .event-text { font-size: 13px; }
+
+  .alert-banner { display: none; align-items: center; gap: 12px; background: #fbe9e9; border: 1px solid #edb3b3; border-left: 5px solid var(--critical); border-radius: 6px; padding: 14px 18px; }
+  .alert-banner.visible { display: flex; }
+  .alert-text { font-family: 'Atkinson Hyperlegible', sans-serif; font-weight: 700; font-size: 16px; color: #7a1f1f; }
+
+  .demo-panel { background: #fafbfa; border: 2px dashed #c7cdc4; border-radius: 10px; padding: 18px; }
+  .demo-btn { font-size: 13px; font-weight: 600; border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; text-align: left; width: 100%; }
+
+  @media (max-width: 1000px) {
+    .app-shell { flex-direction: column; }
+    .sidebar { width: 100%; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
+    .sidebar-search { display: none; }
+    .nav-item { padding: 7px 10px; }
+    .grid-5, .grid-4, .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    [style*="grid-template-columns:1fr 1.3fr"], [style*="grid-template-columns:1.3fr 1fr"], [style*="grid-template-columns:1fr 1.2fr"], [style*="grid-template-columns:1.4fr 1fr"], [style*="grid-template-columns:1fr 1fr"] { grid-template-columns: 1fr !important; }
+  }
+</style>
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- SIDEBAR -->
+  <nav class="sidebar">
+    <div class="sidebar-brand">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#5eead4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3.5 2"></path></svg>
+      <span class="heading" style="color:#ffffff; font-weight:700; font-size:17px; letter-spacing:0.01em;">Bleep</span>
+    </div>
+
+    <div class="sidebar-search">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7c8698" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+      <span style="font-size:12.5px; color:#7c8698;">Search sites, nodes...</span>
+    </div>
+
+    <a class="nav-item active" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>Dashboard</a>
+    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"></path></svg>Site Coverage</a>
+    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6l-9-4Z"></path></svg>Device Security</a>
+    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>Safety Exposure</a>
+    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>Issues</a>
+    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"></path><path d="M4.6 15a7.97 7.97 0 0 1 0-6M19.4 9a7.97 7.97 0 0 1 0 6M8 4.6a7.97 7.97 0 0 1 8 0M8 19.4a7.97 7.97 0 0 1 8 0"></path></svg>Risk Score</a>
+    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path></svg>Reports</a>
+    <div class="nav-divider"></div>
+    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>Settings</a>
+    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2.5 2-2.5 3.5"></path><path d="M12 17h.01"></path></svg>Support</a>
+  </nav>
+
+  <!-- MAIN -->
+  <div class="main">
+
+    <div class="topbar">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <h1 class="heading" style="margin:0; font-size:18px; font-weight:700;">Dashboard</h1>
+        <div class="sim-flag">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#a1720f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"></path></svg>
+          <span class="mono" style="color:#a1720f; font-size:10.5px; font-weight:600; letter-spacing:0.03em;">SIMULATED DATA</span>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:20px;">
+        <span class="mono" id="topbar-clock" style="color:var(--text-muted); font-size:13px;">14:32:05</span>
+        <div style="display:flex; align-items:center; gap:9px; padding-left:16px; border-left:1px solid var(--border);">
+          <div style="width:30px; height:30px; border-radius:50%; background:var(--accent-soft); display:flex; align-items:center; justify-content:center;">
+            <span class="heading" style="font-size:12px; font-weight:700; color:var(--accent);">JR</span>
+          </div>
+          <div style="line-height:1.25;">
+            <div style="font-size:12.5px; font-weight:600;">J. Rao</div>
+            <div style="font-size:11px; color:var(--text-muted);">Site Manager</div>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- ============ FEATURE 1 ============ -->
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <h2 class="heading" style="margin:0; font-size:19px; font-weight:700;">Fall &amp; Inactivity Detection</h2>
+        <span class="heading" style="font-size:11.5px; font-weight:600; color:var(--accent); background:var(--accent-soft); border:1px solid #bfe3de; border-radius:20px; padding:4px 11px;">Feature 1 · Live</span>
+        <div style="display:flex; align-items:center; gap:6px; background:#ffffff; border:1px solid var(--border); border-radius:20px; padding:5px 12px; margin-left:auto;">
+          <span style="width:7px; height:7px; border-radius:50%; background:var(--good);"></span>
+          <span style="font-size:12.5px; font-weight:500;">Wall Node · Connected</span>
+        </div>
+      </div>
+
+      <div class="grid-4">
+        <div class="stat-card">
+          <div class="stat-label">Workers Monitored</div>
+          <div class="mono stat-value">3</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Active Alerts</div>
+          <div class="mono stat-value" id="active-alerts-value">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Network</div>
+          <div style="display:flex; align-items:center; gap:7px;">
+            <span style="width:9px; height:9px; border-radius:50%; background:var(--good);"></span>
+            <span class="heading" style="font-size:17px; font-weight:700;">Online</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Last Update</div>
+          <div class="mono" id="last-update" style="font-size:17px; font-weight:600;">14:32:05</div>
+        </div>
+      </div>
+
+      <div class="alert-banner" id="alert-banner">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#d03b3b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"></path></svg>
+        <span class="alert-text">FALL SUSPECTED — Worker W1 — immediate response required</span>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <h3 class="heading" style="margin:0; font-size:15px; font-weight:700;">Worker Roster</h3>
+        <div class="grid-3">
+
+          <div class="worker-card" id="w1-card" style="border-color:#e2e6ea;">
+            <div class="worker-head">
+              <span class="heading" style="font-size:15px; font-weight:700;">W1</span>
+              <span class="status-pill" id="w1-pill" style="background:#0ca30c;">OK</span>
+            </div>
+            <div class="worker-metrics">
+              <div><div class="metric-label">Motion Energy</div><div class="mono metric-value" id="w1-motion">0.38 g</div></div>
+              <div><div class="metric-label">RSSI</div><div class="mono metric-value">-58 dBm</div></div>
+              <div><div class="metric-label">Battery</div><div class="mono metric-value">—</div></div>
+              <div><div class="metric-label">Last Seq</div><div class="mono metric-value" id="w1-seq">6041</div></div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted); margin-bottom:4px;"><span>Inactivity Timer</span><span class="mono" id="w1-timer-label">2s / 20s</span></div>
+              <div class="progress-track" id="w1-track" style="background:#e2e6ea;"><div class="progress-fill" id="w1-fill" style="width:10%; background:#0f766e;"></div></div>
+            </div>
+          </div>
+
+          <div class="card worker-card">
+            <div class="worker-head">
+              <span class="heading" style="font-size:15px; font-weight:700;">W2</span>
+              <span class="status-pill" style="background:var(--good);">OK</span>
+            </div>
+            <div class="worker-metrics">
+              <div><div class="metric-label">Motion Energy</div><div class="mono metric-value">0.41 g</div></div>
+              <div><div class="metric-label">RSSI</div><div class="mono metric-value">-49 dBm</div></div>
+              <div><div class="metric-label">Battery</div><div class="mono metric-value">—</div></div>
+              <div><div class="metric-label">Last Seq</div><div class="mono metric-value">6094</div></div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted); margin-bottom:4px;"><span>Inactivity Timer</span><span class="mono">2s / 20s</span></div>
+              <div class="progress-track"><div class="progress-fill" style="width:10%; background:var(--accent);"></div></div>
+            </div>
+          </div>
+
+          <div class="card worker-card" style="opacity:0.7;">
+            <div class="worker-head">
+              <span class="heading" style="font-size:15px; font-weight:700;">W3</span>
+              <span class="status-pill" style="background:var(--offline);">OFFLINE</span>
+            </div>
+            <div class="worker-metrics">
+              <div><div class="metric-label">Motion Energy</div><div class="mono metric-value">—</div></div>
+              <div><div class="metric-label">RSSI</div><div class="mono metric-value">—</div></div>
+              <div><div class="metric-label">Battery</div><div class="mono metric-value">—</div></div>
+              <div><div class="metric-label">Last Seq</div><div class="mono metric-value">3310</div></div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted); margin-bottom:4px;"><span>Inactivity Timer</span><span class="mono">— / 20s</span></div>
+              <div class="progress-track"><div class="progress-fill" style="width:0%; background:var(--offline);"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1.4fr 1fr; gap:16px; align-items:start;">
+        <div class="card">
+          <div class="card-head"><h3 class="card-title heading">Event Log</h3></div>
+          <div style="max-height:260px; overflow-y:auto; padding:6px 18px;" id="event-log-list"></div>
+        </div>
+        <div class="demo-panel">
+          <h3 class="heading" style="margin:0 0 4px; font-size:13px; font-weight:700; letter-spacing:0.02em;">DEMO &amp; TESTING CONTROLS</h3>
+          <p style="margin:0 0 16px; font-size:12px; color:var(--text-muted);">Simulated inputs — not connected to hardware.</p>
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <button class="demo-btn" style="color:#ffffff; background:var(--critical);" onclick="triggerFall()">Trigger Fall (W1)</button>
+            <button class="demo-btn" style="color:#ffffff; background:var(--accent);" onclick="simulateMovement()">Simulate Movement (W1)</button>
+            <button class="demo-btn" style="color:var(--text); background:#ffffff; border:1px solid #c7cdc4;" onclick="resetDemo()">Reset Demo</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ SITE COVERAGE ============ -->
+      <div class="section-divider"></div>
+      <h2 class="heading" style="margin:0; font-size:19px; font-weight:700;">Site Coverage</h2>
+
+      <div class="grid-5">
+        <div class="stat-card"><div class="stat-label">Mine Sites</div><div class="stat-value-row"><span class="mono stat-value">4</span><span class="trend trend-up">0%</span></div></div>
+        <div class="stat-card"><div class="stat-label">Wall Nodes</div><div class="stat-value-row"><span class="mono stat-value">12</span><span class="trend trend-up">+2</span></div></div>
+        <div class="stat-card"><div class="stat-label">Worker Units</div><div class="stat-value-row"><span class="mono stat-value">37</span><span class="trend trend-up">+3</span></div></div>
+        <div class="stat-card"><div class="stat-label">Dormant Nodes</div><div class="stat-value-row"><span class="mono stat-value">2</span><span class="trend trend-down">-1</span></div></div>
+        <div class="stat-card"><div class="stat-label">Active Channels</div><div class="stat-value-row"><span class="mono stat-value">9</span><span class="trend trend-up">+1</span></div></div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1.3fr; gap:16px; align-items:stretch;">
+
+        <div class="card">
+          <div class="card-head"><h3 class="card-title heading">Risk Level</h3></div>
+          <div class="card-body" style="display:flex; flex-direction:column; align-items:center; gap:6px;">
+            <svg width="180" height="104" viewBox="0 0 200 116">
+              <path d="M20,100 A80,80 0 0 1 180,100" fill="none" stroke="#eceeec" stroke-width="14" stroke-linecap="round"></path>
+              <path d="M20,100 A80,80 0 0 1 180,100" fill="none" stroke="var(--good)" stroke-width="14" stroke-linecap="round" stroke-dasharray="45.2 251.3"></path>
+              <line x1="100" y1="100" x2="61" y2="52" stroke="#14181f" stroke-width="3" stroke-linecap="round"></line>
+              <circle cx="100" cy="100" r="6" fill="#14181f"></circle>
+            </svg>
+            <div class="mono heading" style="font-size:26px; font-weight:700; color:var(--good); margin-top:-8px;">18%</div>
+            <div style="font-size:12px; color:var(--text-muted);">Low risk across monitored sites</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title heading">Incident Severity</h3>
+            <a class="view-all" href="#">View All <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></a>
+          </div>
+          <div class="card-body" style="display:flex; align-items:center; gap:24px; flex-wrap:wrap;">
+            <svg width="160" height="160" viewBox="0 0 200 200" style="flex-shrink:0;">
+              <circle cx="100" cy="100" r="85" fill="none" stroke="#eceeec" stroke-width="10"></circle>
+              <circle cx="100" cy="100" r="85" fill="none" stroke="var(--critical)" stroke-width="10" stroke-linecap="round" stroke-dasharray="80 534" transform="rotate(-90 100 100)"></circle>
+              <circle cx="100" cy="100" r="70" fill="none" stroke="#eceeec" stroke-width="10"></circle>
+              <circle cx="100" cy="100" r="70" fill="none" stroke="#e0793c" stroke-width="10" stroke-linecap="round" stroke-dasharray="123 440" transform="rotate(-90 100 100)"></circle>
+              <circle cx="100" cy="100" r="55" fill="none" stroke="#eceeec" stroke-width="10"></circle>
+              <circle cx="100" cy="100" r="55" fill="none" stroke="#e0a83c" stroke-width="10" stroke-linecap="round" stroke-dasharray="145 346" transform="rotate(-90 100 100)"></circle>
+              <circle cx="100" cy="100" r="40" fill="none" stroke="#eceeec" stroke-width="10"></circle>
+              <circle cx="100" cy="100" r="40" fill="none" stroke="var(--good)" stroke-width="10" stroke-linecap="round" stroke-dasharray="163 251" transform="rotate(-90 100 100)"></circle>
+              <circle cx="100" cy="100" r="25" fill="none" stroke="#eceeec" stroke-width="10"></circle>
+              <circle cx="100" cy="100" r="25" fill="none" stroke="var(--offline)" stroke-width="10" stroke-linecap="round" stroke-dasharray="133 157" transform="rotate(-90 100 100)"></circle>
+            </svg>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--critical);"></span>Critical · 3</div>
+              <div class="legend-chip"><span class="legend-swatch" style="background:#e0793c;"></span>High · 8</div>
+              <div class="legend-chip"><span class="legend-swatch" style="background:#e0a83c;"></span>Medium · 14</div>
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--good);"></span>Low · 22</div>
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--offline);"></span>Informational · 31</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1.3fr 1fr; gap:16px; align-items:stretch;">
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title heading">Mine Map</h3>
+              <p class="card-sub">Node status across active tunnel network</p>
+            </div>
+            <a class="view-all" href="#">View All <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></a>
+          </div>
+          <div class="card-body">
+            <svg width="100%" height="260" viewBox="0 0 360 260" style="background:#f2f6f4; border-radius:8px;">
+              <defs>
+                <pattern id="gridp" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#dfe6e2" stroke-width="1"></path></pattern>
+              </defs>
+              <rect x="0" y="0" width="360" height="260" fill="url(#gridp)"></rect>
+              <path d="M100,20 L100,120" fill="none" stroke="#9aa39c" stroke-width="3" stroke-dasharray="2 5"></path>
+              <path d="M100,120 L40,220" fill="none" stroke="#9aa39c" stroke-width="3" stroke-dasharray="2 5"></path>
+              <path d="M100,120 L220,180 L300,240" fill="none" stroke="#9aa39c" stroke-width="3" stroke-dasharray="2 5"></path>
+              <path d="M100,120 L190,60" fill="none" stroke="#9aa39c" stroke-width="3" stroke-dasharray="2 5"></path>
+              <circle cx="100" cy="20" r="8" fill="var(--good)"></circle>
+              <text x="115" y="24" font-size="11" fill="#3a444e" font-family="IBM Plex Mono, monospace">WN-1 · Entrance</text>
+              <circle cx="40" cy="220" r="8" fill="var(--good)"></circle>
+              <text x="10" y="240" font-size="11" fill="#3a444e" font-family="IBM Plex Mono, monospace">WN-2 · Level 1</text>
+              <circle cx="300" cy="240" r="8" fill="var(--critical)"></circle>
+              <text x="248" y="230" font-size="11" fill="#3a444e" font-family="IBM Plex Mono, monospace">WN-3 · Level 2</text>
+              <circle cx="190" cy="60" r="8" fill="var(--offline)"></circle>
+              <text x="205" y="58" font-size="11" fill="#3a444e" font-family="IBM Plex Mono, monospace">WN-4 · Drift 3</text>
+            </svg>
+            <div style="display:flex; gap:20px; margin-top:14px; flex-wrap:wrap;">
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--good); border-radius:50%;"></span>Operational</div>
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--critical); border-radius:50%;"></span>Alert Active</div>
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--offline); border-radius:50%;"></span>Offline</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3 class="card-title heading">Alerts by Crew</h3><p class="card-sub" style="margin-left:auto;">Last 4 months</p></div>
+          <div class="card-body" style="display:flex; flex-direction:column; gap:16px;">
+            <div>
+              <div style="font-size:11.5px; color:var(--text-muted); margin-bottom:6px;">June</div>
+              <div style="display:flex; flex-direction:column; gap:5px;">
+                <div style="display:flex; align-items:center; gap:8px;"><span style="width:52px; font-size:11px; color:var(--text-muted);">Crew A</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:40%; background:var(--c1);"></div></div><span class="mono" style="font-size:11px; width:16px;">2</span></div>
+                <div style="display:flex; align-items:center; gap:8px;"><span style="width:52px; font-size:11px; color:var(--text-muted);">Crew B</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:20%; background:var(--c2);"></div></div><span class="mono" style="font-size:11px; width:16px;">1</span></div>
+                <div style="display:flex; align-items:center; gap:8px;"><span style="width:52px; font-size:11px; color:var(--text-muted);">Crew C</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:60%; background:var(--c3);"></div></div><span class="mono" style="font-size:11px; width:16px;">3</span></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:11.5px; color:var(--text-muted); margin-bottom:6px;">July</div>
+              <div style="display:flex; flex-direction:column; gap:5px;">
+                <div style="display:flex; align-items:center; gap:8px;"><span style="width:52px; font-size:11px; color:var(--text-muted);">Crew A</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:20%; background:var(--c1);"></div></div><span class="mono" style="font-size:11px; width:16px;">1</span></div>
+                <div style="display:flex; align-items:center; gap:8px;"><span style="width:52px; font-size:11px; color:var(--text-muted);">Crew B</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:40%; background:var(--c2);"></div></div><span class="mono" style="font-size:11px; width:16px;">2</span></div>
+                <div style="display:flex; align-items:center; gap:8px;"><span style="width:52px; font-size:11px; color:var(--text-muted);">Crew C</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:20%; background:var(--c3);"></div></div><span class="mono" style="font-size:11px; width:16px;">1</span></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:11.5px; color:var(--text-muted); margin-bottom:6px;">August</div>
+              <div style="display:flex; flex-direction:column; gap:5px;">
+                <div style="display:flex; align-items:center; gap:8px;"><span style="width:52px; font-size:11px; color:var(--text-muted);">Crew A</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:60%; background:var(--c1);"></div></div><span class="mono" style="font-size:11px; width:16px;">3</span></div>
+                <div style="display:flex; align-items:center; gap:8px;"><span style="width:52px; font-size:11px; color:var(--text-muted);">Crew B</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:20%; background:var(--c2);"></div></div><span class="mono" style="font-size:11px; width:16px;">1</span></div>
+                <div style="display:flex; align-items:center; gap:8px;"><span style="width:52px; font-size:11px; color:var(--text-muted);">Crew C</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:0%; background:var(--c3);"></div></div><span class="mono" style="font-size:11px; width:16px;">0</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ DEVICE SECURITY ============ -->
+      <div class="section-divider"></div>
+      <h2 class="heading" style="margin:0; font-size:19px; font-weight:700;">Device Security</h2>
+
+      <div class="grid-5">
+        <div class="stat-card"><div class="stat-label">Known Hazards</div><div class="stat-value-row"><span class="mono stat-value">7</span><span class="trend trend-down">+1</span></div></div>
+        <div class="stat-card"><div class="stat-label">Rogue Devices</div><div class="stat-value-row"><span class="mono stat-value">0</span><span class="trend trend-up">0%</span></div></div>
+        <div class="stat-card"><div class="stat-label">Field Reports</div><div class="stat-value-row"><span class="mono stat-value">15</span><span class="trend trend-up">+4</span></div></div>
+        <div class="stat-card"><div class="stat-label">Critical Breaches</div><div class="stat-value-row"><span class="mono stat-value">0</span><span class="trend trend-up">0%</span></div></div>
+        <div class="stat-card"><div class="stat-label">Priority Workers</div><div class="stat-value-row"><span class="mono stat-value">5</span><span class="trend trend-up">+1</span></div></div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:stretch;">
+        <div class="card">
+          <div class="card-head"><h3 class="card-title heading">Node Certificates</h3></div>
+          <div class="card-body" style="padding-top:6px; padding-bottom:6px;">
+            <div class="status-row"><div class="status-left"><span class="status-dot" style="background:var(--good);"></span>Valid</div><span class="mono">12</span></div>
+            <div class="status-row"><div class="status-left"><span class="status-dot" style="background:#e0a83c;"></span>Expired</div><span class="mono">1</span></div>
+            <div class="status-row"><div class="status-left"><span class="status-dot" style="background:var(--critical);"></span>Revoked</div><span class="mono">0</span></div>
+            <div class="status-row"><div class="status-left"><span class="status-dot" style="background:var(--c3);"></span>Untrusted</div><span class="mono">0</span></div>
+            <div class="status-row"><div class="status-left"><span class="status-dot" style="background:#e0a83c;"></span>Mismatched</div><span class="mono">1</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3 class="card-title heading">Exposure Categories</h3></div>
+          <div class="card-body" style="display:flex; align-items:center; gap:22px; flex-wrap:wrap;">
+            <div style="width:120px; height:120px; border-radius:50%; background:conic-gradient(var(--c3) 0% 35%, var(--c1) 35% 60%, var(--c4) 60% 80%, var(--c5) 80% 100%); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+              <div style="width:66px; height:66px; border-radius:50%; background:var(--surface);"></div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:9px;">
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--c3);"></span>Weak Credentials · 35%</div>
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--c1);"></span>Open Channels · 25%</div>
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--c4);"></span>Outdated Firmware · 20%</div>
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--c5);"></span>Unencrypted Comms · 20%</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1.2fr; gap:16px; align-items:stretch;">
+        <div class="card">
+          <div class="card-head"><h3 class="card-title heading">Open Channels</h3></div>
+          <div class="card-body" style="display:flex; flex-direction:column; gap:12px;">
+            <div><div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;"><span>ESP-NOW Ch 3</span><span class="mono">82%</span></div><div class="progress-track"><div class="progress-fill" style="width:82%; background:var(--accent);"></div></div></div>
+            <div><div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;"><span>WiFi 2.4GHz Ch 6</span><span class="mono">64%</span></div><div class="progress-track"><div class="progress-fill" style="width:64%; background:var(--accent);"></div></div></div>
+            <div><div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;"><span>WiFi 2.4GHz Ch 11</span><span class="mono">41%</span></div><div class="progress-track"><div class="progress-fill" style="width:41%; background:var(--accent);"></div></div></div>
+            <div><div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;"><span>Local Relay Link</span><span class="mono">18%</span></div><div class="progress-track"><div class="progress-fill" style="width:18%; background:var(--accent);"></div></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3 class="card-title heading">Annual Incident Activity</h3></div>
+          <div class="card-body">
+            <div style="display:flex; align-items:flex-end; gap:14px; height:140px;">
+              <div style="display:flex; flex-direction:column; align-items:center; gap:4px; flex:1;"><div style="display:flex; align-items:flex-end; gap:3px; height:110px;"><div style="width:10px; height:20px; background:var(--critical); border-radius:2px 2px 0 0;"></div><div style="width:10px; height:70px; background:var(--good); border-radius:2px 2px 0 0;"></div></div><span style="font-size:10.5px; color:var(--text-muted);">Mar</span></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:4px; flex:1;"><div style="display:flex; align-items:flex-end; gap:3px; height:110px;"><div style="width:10px; height:12px; background:var(--critical); border-radius:2px 2px 0 0;"></div><div style="width:10px; height:85px; background:var(--good); border-radius:2px 2px 0 0;"></div></div><span style="font-size:10.5px; color:var(--text-muted);">Apr</span></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:4px; flex:1;"><div style="display:flex; align-items:flex-end; gap:3px; height:110px;"><div style="width:10px; height:34px; background:var(--critical); border-radius:2px 2px 0 0;"></div><div style="width:10px; height:60px; background:var(--good); border-radius:2px 2px 0 0;"></div></div><span style="font-size:10.5px; color:var(--text-muted);">May</span></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:4px; flex:1;"><div style="display:flex; align-items:flex-end; gap:3px; height:110px;"><div style="width:10px; height:8px; background:var(--critical); border-radius:2px 2px 0 0;"></div><div style="width:10px; height:95px; background:var(--good); border-radius:2px 2px 0 0;"></div></div><span style="font-size:10.5px; color:var(--text-muted);">Jun</span></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:4px; flex:1;"><div style="display:flex; align-items:flex-end; gap:3px; height:110px;"><div style="width:10px; height:22px; background:var(--critical); border-radius:2px 2px 0 0;"></div><div style="width:10px; height:78px; background:var(--good); border-radius:2px 2px 0 0;"></div></div><span style="font-size:10.5px; color:var(--text-muted);">Jul</span></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:4px; flex:1;"><div style="display:flex; align-items:flex-end; gap:3px; height:110px;"><div style="width:10px; height:16px; background:var(--critical); border-radius:2px 2px 0 0;"></div><div style="width:10px; height:100px; background:var(--good); border-radius:2px 2px 0 0;"></div></div><span style="font-size:10.5px; color:var(--text-muted);">Aug</span></div>
+            </div>
+            <div style="display:flex; gap:18px; margin-top:14px; flex-wrap:wrap;">
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--critical);"></span>Distress events</div>
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--good);"></span>Normal status pings</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-4">
+        <div class="stat-card"><div class="stat-label">Compromised Configs</div><div class="mono stat-value">0</div></div>
+        <div class="stat-card"><div class="stat-label">Compromised Firmware</div><div class="mono stat-value">0</div></div>
+        <div class="card" style="grid-column:span 2; padding:16px 18px; display:flex; align-items:center; gap:20px; flex-wrap:wrap;">
+          <div style="width:74px; height:74px; border-radius:50%; background:conic-gradient(var(--accent) 0% 62%, var(--c3) 62% 90%, var(--critical) 90% 100%); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+            <div style="width:44px; height:44px; border-radius:50%; background:var(--surface); display:flex; align-items:center; justify-content:center;">
+              <span class="mono" style="font-size:12px; font-weight:600;">62%</span>
+            </div>
+          </div>
+          <div>
+            <div class="card-title heading" style="margin-bottom:8px;">Credential Hygiene</div>
+            <div style="display:flex; flex-direction:column; gap:5px;">
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--accent);"></span>Strong · 62%</div>
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--c3);"></span>Weak · 28%</div>
+              <div class="legend-chip"><span class="legend-swatch" style="background:var(--critical);"></span>Default · 10%</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3 class="card-title heading">Weak Node Credentials</h3>
+          <a class="view-all" href="#">View All <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></a>
+        </div>
+        <div class="card-body" style="display:flex; flex-direction:column; gap:11px;">
+          <div style="display:flex; align-items:center; gap:12px;"><span class="mono" style="width:70px; font-size:12px;">WN-07</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:18%; background:var(--critical);"></div></div><span class="mono" style="width:38px; font-size:12px; text-align:right;">18%</span></div>
+          <div style="display:flex; align-items:center; gap:12px;"><span class="mono" style="width:70px; font-size:12px;">WN-11</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:24%; background:var(--critical);"></div></div><span class="mono" style="width:38px; font-size:12px; text-align:right;">24%</span></div>
+          <div style="display:flex; align-items:center; gap:12px;"><span class="mono" style="width:70px; font-size:12px;">WN-04</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:47%; background:var(--c3);"></div></div><span class="mono" style="width:38px; font-size:12px; text-align:right;">47%</span></div>
+          <div style="display:flex; align-items:center; gap:12px;"><span class="mono" style="width:70px; font-size:12px;">WN-09</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:55%; background:var(--c3);"></div></div><span class="mono" style="width:38px; font-size:12px; text-align:right;">55%</span></div>
+          <div style="display:flex; align-items:center; gap:12px;"><span class="mono" style="width:70px; font-size:12px;">WN-02</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:73%; background:var(--good);"></div></div><span class="mono" style="width:38px; font-size:12px; text-align:right;">73%</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var BASELINE_EVENTS = [
+    { dotColor: '#0ca30c', time: '14:31:48', text: 'W2 · STATUS · OK' },
+    { dotColor: '#0ca30c', time: '14:31:33', text: 'W1 · STATUS · OK' },
+    { dotColor: '#8b93a0', time: '14:29:10', text: 'W3 · OFFLINE · no message in 15s' },
+    { dotColor: '#0ca30c', time: '14:28:52', text: 'W2 · STATUS · OK' },
+    { dotColor: '#0ca30c', time: '14:28:37', text: 'W1 · STATUS · OK' }
+  ];
+  var BASELINE_SECONDS = 14 * 3600 + 32 * 60 + 5;
+
+  var state = {
+    w1Status: 'OK',
+    seq: 6041,
+    clockSeconds: BASELINE_SECONDS,
+    events: BASELINE_EVENTS.slice()
+  };
+
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function formatClock(totalSeconds) {
+    var s = ((totalSeconds % 86400) + 86400) % 86400;
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return pad(h) + ':' + pad(m) + ':' + pad(sec);
+  }
+
+  function render() {
+    var isFall = state.w1Status === 'FALL_SUSPECTED';
+
+    document.getElementById('alert-banner').classList.toggle('visible', isFall);
+
+    var alertsEl = document.getElementById('active-alerts-value');
+    alertsEl.textContent = isFall ? '1' : '0';
+    alertsEl.style.color = isFall ? '#d03b3b' : '#14181f';
+
+    document.getElementById('last-update').textContent = formatClock(state.clockSeconds);
+    document.getElementById('topbar-clock').textContent = formatClock(state.clockSeconds);
+
+    var card = document.getElementById('w1-card');
+    var pill = document.getElementById('w1-pill');
+    var motion = document.getElementById('w1-motion');
+    var seq = document.getElementById('w1-seq');
+    var timerLabel = document.getElementById('w1-timer-label');
+    var track = document.getElementById('w1-track');
+    var fill = document.getElementById('w1-fill');
+
+    if (isFall) {
+      card.style.borderColor = '#edb3b3';
+      pill.textContent = 'FALL SUSPECTED';
+      pill.style.background = '#d03b3b';
+      motion.textContent = '0.02 g';
+      timerLabel.textContent = '18s / 20s';
+      track.style.background = '#f1d4d4';
+      fill.style.background = '#d03b3b';
+      fill.style.width = '90%';
+    } else {
+      card.style.borderColor = '#e2e6ea';
+      pill.textContent = 'OK';
+      pill.style.background = '#0ca30c';
+      motion.textContent = '0.38 g';
+      timerLabel.textContent = '2s / 20s';
+      track.style.background = '#e2e6ea';
+      fill.style.background = '#0f766e';
+      fill.style.width = '10%';
+    }
+    seq.textContent = String(state.seq);
+
+    var logEl = document.getElementById('event-log-list');
+    logEl.innerHTML = '';
+    state.events.forEach(function (ev) {
+      var row = document.createElement('div');
+      row.className = 'event-row';
+      row.innerHTML =
+        '<span class="event-dot" style="background:' + ev.dotColor + ';"></span>' +
+        '<span class="mono event-time">' + ev.time + '</span>' +
+        '<span class="event-text">' + ev.text + '</span>';
+      logEl.appendChild(row);
+    });
+  }
+
+  function pushEvent(dotColor, text) {
+    state.clockSeconds += 8 + Math.floor(Math.random() * 10);
+    state.events.unshift({ dotColor: dotColor, time: formatClock(state.clockSeconds), text: text });
+  }
+
+  window.triggerFall = function () {
+    state.w1Status = 'FALL_SUSPECTED';
+    state.seq += 1;
+    pushEvent('#d03b3b', 'W1 · DISTRESS · FALL_SUSPECTED');
+    render();
+  };
+
+  window.simulateMovement = function () {
+    state.w1Status = 'OK';
+    state.seq += 1;
+    pushEvent('#0ca30c', 'W1 · STATUS · OK (movement detected)');
+    render();
+  };
+
+  window.resetDemo = function () {
+    state.w1Status = 'OK';
+    state.seq = 6041;
+    state.clockSeconds = BASELINE_SECONDS;
+    state.events = BASELINE_EVENTS.slice();
+    render();
+  };
+
+  render();
+})();
+</script>
+</body>
+</html>

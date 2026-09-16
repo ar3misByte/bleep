@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sensora.local/schemas/telemetry.schema.json",
+  "title": "Sensora Wall-Node -> Dashboard Telemetry Message",
+  "description": "One JSON object per HTTP POST from a wall (anchor) node to the dashboard server, over WiFi. Envelope fields are always present; 'payload' shape depends on msgType. Covers Feature 1 (fall/inactivity detection) only — extend msgType/payload as later features are added, don't redesign the envelope.",
+  "type": "object",
+  "required": ["schemaVersion", "msgType", "workerId", "nodeId", "seq", "timestamp", "payload"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Bump this when the SHAPE of any payload changes (new required field, renamed field). Lets the dashboard reject or adapt to messages from older firmware instead of silently misreading them."
+    },
+    "msgType": {
+      "type": "string",
+      "enum": ["STATUS", "DISTRESS"],
+      "description": "STATUS = routine periodic update (recommended addition, ~every 2s). DISTRESS = fall/inactivity event, sent once immediately on trigger, not on the next scheduled tick."
+    },
+    "workerId": {
+      "type": "string",
+      "description": "Hardcoded per worker device, e.g. 'W1'. Must match the ID the worker ESP32 puts in its ESP-NOW packet to the wall node."
+    },
+    "nodeId": {
+      "type": "string",
+      "description": "ID of the WALL node relaying this message. Not useful with only one wall node yet, but free to add now so nothing needs restructuring when you add a second."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Increments per message FROM THIS WORKER (not per wall node). Lets the dashboard detect dropped, duplicated, or out-of-order deliveries over WiFi."
+    },
+    "espnowRssi": {
+      "type": ["integer", "null"],
+      "description": "Signal strength (dBm) of the last ESP-NOW packet the wall node received from this worker. Send null if your firmware isn't reading this yet — do not omit the field."
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Milliseconds since the WALL node booted (millis()). This is NOT wall-clock time. The dashboard should stamp its own arrival time on receipt for anything it displays or logs — see the protocol notes."
+    },
+    "payload": {
+      "oneOf": [
+        { "$ref": "#/definitions/statusPayload" },
+        { "$ref": "#/definitions/distressPayload" }
+      ]
+    }
+  },
+  "definitions": {
+    "statusPayload": {
+      "type": "object",
+      "required": ["riskState", "motionEnergy", "secondsSinceMotion", "battery"],
+      "properties": {
+        "riskState": {
+          "type": "string",
+          "description": "Treat as an open string on the dashboard, not a fixed set — right now only 'OK' and 'FALL_SUSPECTED' are ever sent, but WARNING/CRITICAL/SOS/OFFLINE will be added as later features land. Don't hardcode a switch statement that breaks on an unrecognized value."
+        },
+        "motionEnergy": {
+          "type": "number",
+          "description": "Current rolling motion-energy value from the worker's MPU6050 loop, same units as used for the inactivity threshold in firmware."
+        },
+        "secondsSinceMotion": {
+          "type": "number",
+          "description": "How long the inactivity timer has been running without a reset."
+        },
+        "battery": {
+          "type": ["number", "null"],
+          "description": "Reserved for when battery monitoring is added (see the build checklist's 'other basic features'). Always send null until then — keep the field present so the dashboard doesn't need a schema change later."
+        }
+      }
+    },
+    "distressPayload": {
+      "type": "object",
+      "required": ["hazardType", "riskState", "secondsInactive", "motionEnergyAtTrigger", "battery"],
+      "properties": {
+        "hazardType": {
+          "type": "string",
+          "enum": ["FALL_SUSPECTED"],
+          "description": "Will grow to include SOS, GAS, etc. as those features are added — keep this an open string on the dashboard side, same reasoning as riskState."
+        },
+        "riskState": {
+          "type": "string",
+          "description": "Mirrors the worker's local state at the moment of trigger, currently always 'FALL_SUSPECTED' for this msgType."
+        },
+        "secondsInactive": {
+          "type": "number",
+          "description": "How long the inactivity timer had run when it crossed INACTIVITY_DURATION_SEC."
+        },
+        "motionEnergyAtTrigger": {
+          "type": "number",
+          "description": "The motion-energy value at the instant of triggering, for debugging false positives/negatives."
+        },
+        "battery": {
+          "type": ["number", "null"]
+        }
+      }
+    }
+  }
+}
