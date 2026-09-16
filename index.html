@@ -48,8 +48,6 @@
   .card-title { margin: 0; font-size: 14px; font-weight: 700; color: var(--text); }
   .card-sub { margin: 2px 0 0; font-size: 11.5px; color: var(--text-muted); }
   .card-body { padding: 18px; }
-  .view-all { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none; flex-shrink: 0; }
-
   .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
   .stat-label { font-size: 12px; font-weight: 500; color: var(--text-muted); }
   .stat-value-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
@@ -91,6 +89,32 @@
   .demo-panel { background: #fafbfa; border: 2px dashed #c7cdc4; border-radius: 10px; padding: 18px; }
   .demo-btn { font-size: 13px; font-weight: 600; border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; text-align: left; width: 100%; }
 
+  .nav-item { cursor: pointer; border: none; background: none; width: 100%; text-align: left; }
+  .search-input { background: transparent; border: none; outline: none; color: #e7eaf0; font-size: 12.5px; font-family: inherit; width: 100%; }
+  .search-input::placeholder { color: #7c8698; }
+
+  .avatar-wrap { position: relative; cursor: pointer; }
+  .avatar-menu { position: absolute; top: calc(100% + 8px); right: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 28px rgba(20,24,31,0.12); min-width: 172px; padding: 6px; display: none; flex-direction: column; z-index: 60; }
+  .avatar-menu.visible { display: flex; }
+  .avatar-menu button { display: flex; align-items: center; gap: 8px; background: none; border: none; text-align: left; font-size: 12.5px; color: var(--text); padding: 8px 9px; border-radius: 6px; cursor: pointer; }
+  .avatar-menu button:hover { background: var(--bg); filter: none; }
+  .avatar-menu-divider { height: 1px; background: var(--border); margin: 4px 2px; }
+
+  .view-all { cursor: pointer; border: none; background: none; padding: 0; }
+  .card-action { cursor: pointer; border: none; background: none; padding: 0; display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--accent); flex-shrink: 0; }
+  .card-action:hover { color: #0b5951; }
+
+  .modal-overlay { position: fixed; inset: 0; background: rgba(15,18,23,0.45); display: none; align-items: center; justify-content: center; padding: 24px; z-index: 200; }
+  .modal-overlay.visible { display: flex; }
+  .modal-panel { background: var(--surface); border-radius: 12px; width: 100%; max-width: 460px; max-height: 82vh; overflow-y: auto; box-shadow: 0 24px 60px rgba(15,18,23,0.22); }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+  .modal-title { margin: 0; font-size: 15px; font-weight: 700; }
+  .modal-close { border: none; background: none; cursor: pointer; color: var(--text-muted); padding: 4px; border-radius: 6px; display: flex; }
+  .modal-close:hover { background: var(--bg); filter: none; }
+  .modal-body { padding: 18px 20px; font-size: 13px; color: var(--text); }
+  .modal-body p { margin: 0 0 12px; color: var(--text-muted); line-height: 1.5; }
+  .modal-note { margin-top: 14px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border); padding-top: 10px; }
+
   @media (max-width: 1000px) {
     .app-shell { flex-direction: column; }
     .sidebar { width: 100%; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
@@ -113,19 +137,19 @@
 
     <div class="sidebar-search">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7c8698" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
-      <span style="font-size:12.5px; color:#7c8698;">Search sites, nodes...</span>
+      <input class="search-input" id="search-input" type="text" placeholder="Search sites, nodes...">
     </div>
 
-    <a class="nav-item active" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>Dashboard</a>
-    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"></path></svg>Site Coverage</a>
-    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6l-9-4Z"></path></svg>Device Security</a>
-    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>Safety Exposure</a>
-    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>Issues</a>
-    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"></path><path d="M4.6 15a7.97 7.97 0 0 1 0-6M19.4 9a7.97 7.97 0 0 1 0 6M8 4.6a7.97 7.97 0 0 1 8 0M8 19.4a7.97 7.97 0 0 1 8 0"></path></svg>Risk Score</a>
-    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path></svg>Reports</a>
+    <button class="nav-item active" id="nav-dashboard" onclick="handleNav('dashboard')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>Dashboard</button>
+    <button class="nav-item" id="nav-site-coverage" onclick="handleNav('site-coverage')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"></path></svg>Site Coverage</button>
+    <button class="nav-item" id="nav-device-security" onclick="handleNav('device-security')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6l-9-4Z"></path></svg>Device Security</button>
+    <button class="nav-item" id="nav-safety-exposure" onclick="handleNav('safety-exposure')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>Safety Exposure</button>
+    <button class="nav-item" id="nav-issues" onclick="handleNav('issues')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>Issues</button>
+    <button class="nav-item" id="nav-risk-score" onclick="handleNav('risk-score')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"></path><path d="M4.6 15a7.97 7.97 0 0 1 0-6M19.4 9a7.97 7.97 0 0 1 0 6M8 4.6a7.97 7.97 0 0 1 8 0M8 19.4a7.97 7.97 0 0 1 8 0"></path></svg>Risk Score</button>
+    <button class="nav-item" id="nav-reports" onclick="handleNav('reports')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path></svg>Reports</button>
     <div class="nav-divider"></div>
-    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>Settings</a>
-    <a class="nav-item" href="#"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2.5 2-2.5 3.5"></path><path d="M12 17h.01"></path></svg>Support</a>
+    <button class="nav-item" id="nav-settings" onclick="handleNav('settings')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>Settings</button>
+    <button class="nav-item" id="nav-support" onclick="handleNav('support')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2.5 2-2.5 3.5"></path><path d="M12 17h.01"></path></svg>Support</button>
   </nav>
 
   <!-- MAIN -->
@@ -141,7 +165,7 @@
       </div>
       <div style="display:flex; align-items:center; gap:20px;">
         <span class="mono" id="topbar-clock" style="color:var(--text-muted); font-size:13px;">14:32:05</span>
-        <div style="display:flex; align-items:center; gap:9px; padding-left:16px; border-left:1px solid var(--border);">
+        <div class="avatar-wrap" id="avatar-wrap" onclick="toggleAvatarMenu(event)" style="display:flex; align-items:center; gap:9px; padding-left:16px; border-left:1px solid var(--border);">
           <div style="width:30px; height:30px; border-radius:50%; background:var(--accent-soft); display:flex; align-items:center; justify-content:center;">
             <span class="heading" style="font-size:12px; font-weight:700; color:var(--accent);">JR</span>
           </div>
@@ -150,6 +174,13 @@
             <div style="font-size:11px; color:var(--text-muted);">Site Manager</div>
           </div>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+
+          <div class="avatar-menu" id="avatar-menu">
+            <button onclick="openModal('Profile', profileModalHtml())">Profile</button>
+            <button onclick="openModal('Preferences', preferencesModalHtml())">Preferences</button>
+            <div class="avatar-menu-divider"></div>
+            <button onclick="openModal('Signed out', signOutModalHtml())">Sign out</button>
+          </div>
         </div>
       </div>
     </div>
@@ -157,7 +188,7 @@
     <div class="content">
 
       <!-- ============ FEATURE 1 ============ -->
-      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+      <div id="section-dashboard" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
         <h2 class="heading" style="margin:0; font-size:19px; font-weight:700;">Fall &amp; Inactivity Detection</h2>
         <span class="heading" style="font-size:11.5px; font-weight:600; color:var(--accent); background:var(--accent-soft); border:1px solid #bfe3de; border-radius:20px; padding:4px 11px;">Feature 1 · Live</span>
         <div style="display:flex; align-items:center; gap:6px; background:#ffffff; border:1px solid var(--border); border-radius:20px; padding:5px 12px; margin-left:auto;">
@@ -252,7 +283,10 @@
 
       <div style="display:grid; grid-template-columns:1.4fr 1fr; gap:16px; align-items:start;">
         <div class="card">
-          <div class="card-head"><h3 class="card-title heading">Event Log</h3></div>
+          <div class="card-head">
+            <h3 class="card-title heading">Event Log</h3>
+            <button class="card-action" onclick="openModal('Event Log — full history', eventLogModalHtml())">View All <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></button>
+          </div>
           <div style="max-height:260px; overflow-y:auto; padding:6px 18px;" id="event-log-list"></div>
         </div>
         <div class="demo-panel" id="demo-panel">
@@ -268,7 +302,7 @@
 
       <!-- ============ SITE COVERAGE ============ -->
       <div class="section-divider"></div>
-      <h2 class="heading" style="margin:0; font-size:19px; font-weight:700;">Site Coverage</h2>
+      <h2 class="heading" id="section-site-coverage" style="margin:0; font-size:19px; font-weight:700;">Site Coverage</h2>
 
       <div class="grid-5">
         <div class="stat-card"><div class="stat-label">Mine Sites</div><div class="stat-value-row"><span class="mono stat-value">4</span><span class="trend trend-up">0%</span></div></div>
@@ -281,7 +315,10 @@
       <div style="display:grid; grid-template-columns:1fr 1.3fr; gap:16px; align-items:stretch;">
 
         <div class="card">
-          <div class="card-head"><h3 class="card-title heading">Risk Level</h3></div>
+          <div class="card-head">
+            <h3 class="card-title heading">Risk Level</h3>
+            <button class="card-action" onclick="openModal('Risk Level — trend', riskTrendModalHtml())">Details <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></button>
+          </div>
           <div class="card-body" style="display:flex; flex-direction:column; align-items:center; gap:6px;">
             <svg width="180" height="104" viewBox="0 0 200 116">
               <path d="M20,100 A80,80 0 0 1 180,100" fill="none" stroke="#eceeec" stroke-width="14" stroke-linecap="round"></path>
@@ -297,7 +334,7 @@
         <div class="card">
           <div class="card-head">
             <h3 class="card-title heading">Incident Severity</h3>
-            <a class="view-all" href="#">View All <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></a>
+            <button class="card-action" onclick="openModal('Incident Severity — breakdown', severityModalHtml())">View All <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></button>
           </div>
           <div class="card-body" style="display:flex; align-items:center; gap:24px; flex-wrap:wrap;">
             <svg width="160" height="160" viewBox="0 0 200 200" style="flex-shrink:0;">
@@ -331,7 +368,7 @@
               <h3 class="card-title heading">Mine Map</h3>
               <p class="card-sub">Node status across active tunnel network</p>
             </div>
-            <a class="view-all" href="#">View All <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></a>
+            <button class="card-action" onclick="openModal('Mine Map — node list', mineMapModalHtml())">View All <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></button>
           </div>
           <div class="card-body">
             <svg width="100%" height="260" viewBox="0 0 360 260" style="background:#f2f6f4; border-radius:8px;">
@@ -361,7 +398,13 @@
         </div>
 
         <div class="card">
-          <div class="card-head"><h3 class="card-title heading">Alerts by Crew</h3><p class="card-sub" style="margin-left:auto;">Last 4 months</p></div>
+          <div class="card-head">
+            <h3 class="card-title heading">Alerts by Crew</h3>
+            <div style="display:flex; align-items:center; gap:12px; margin-left:auto;">
+              <p class="card-sub" style="margin:0;">Last 4 months</p>
+              <button class="card-action" onclick="openModal('Alerts by Crew — full totals', crewModalHtml())">Details <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></button>
+            </div>
+          </div>
           <div class="card-body" style="display:flex; flex-direction:column; gap:16px;">
             <div>
               <div style="font-size:11.5px; color:var(--text-muted); margin-bottom:6px;">June</div>
@@ -393,7 +436,7 @@
 
       <!-- ============ DEVICE SECURITY ============ -->
       <div class="section-divider"></div>
-      <h2 class="heading" style="margin:0; font-size:19px; font-weight:700;">Device Security</h2>
+      <h2 class="heading" id="section-device-security" style="margin:0; font-size:19px; font-weight:700;">Device Security</h2>
 
       <div class="grid-5">
         <div class="stat-card"><div class="stat-label">Known Hazards</div><div class="stat-value-row"><span class="mono stat-value">7</span><span class="trend trend-down">+1</span></div></div>
@@ -405,7 +448,10 @@
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:stretch;">
         <div class="card">
-          <div class="card-head"><h3 class="card-title heading">Node Certificates</h3></div>
+          <div class="card-head">
+            <h3 class="card-title heading">Node Certificates</h3>
+            <button class="card-action" onclick="openModal('Node Certificates — detail', certificatesModalHtml())">Details <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></button>
+          </div>
           <div class="card-body" style="padding-top:6px; padding-bottom:6px;">
             <div class="status-row"><div class="status-left"><span class="status-dot" style="background:var(--good);"></span>Valid</div><span class="mono">12</span></div>
             <div class="status-row"><div class="status-left"><span class="status-dot" style="background:#e0a83c;"></span>Expired</div><span class="mono">1</span></div>
@@ -416,7 +462,10 @@
         </div>
 
         <div class="card">
-          <div class="card-head"><h3 class="card-title heading">Exposure Categories</h3></div>
+          <div class="card-head">
+            <h3 class="card-title heading">Exposure Categories</h3>
+            <button class="card-action" onclick="openModal('Exposure Categories — detail', exposureModalHtml())">Details <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></button>
+          </div>
           <div class="card-body" style="display:flex; align-items:center; gap:22px; flex-wrap:wrap;">
             <div style="width:120px; height:120px; border-radius:50%; background:conic-gradient(var(--c3) 0% 35%, var(--c1) 35% 60%, var(--c4) 60% 80%, var(--c5) 80% 100%); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
               <div style="width:66px; height:66px; border-radius:50%; background:var(--surface);"></div>
@@ -433,7 +482,10 @@
 
       <div style="display:grid; grid-template-columns:1fr 1.2fr; gap:16px; align-items:stretch;">
         <div class="card">
-          <div class="card-head"><h3 class="card-title heading">Open Channels</h3></div>
+          <div class="card-head">
+            <h3 class="card-title heading">Open Channels</h3>
+            <button class="card-action" onclick="openModal('Open Channels — detail', channelsModalHtml())">Details <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></button>
+          </div>
           <div class="card-body" style="display:flex; flex-direction:column; gap:12px;">
             <div><div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;"><span>ESP-NOW Ch 3</span><span class="mono">82%</span></div><div class="progress-track"><div class="progress-fill" style="width:82%; background:var(--accent);"></div></div></div>
             <div><div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;"><span>WiFi 2.4GHz Ch 6</span><span class="mono">64%</span></div><div class="progress-track"><div class="progress-fill" style="width:64%; background:var(--accent);"></div></div></div>
@@ -443,7 +495,10 @@
         </div>
 
         <div class="card">
-          <div class="card-head"><h3 class="card-title heading">Annual Incident Activity</h3></div>
+          <div class="card-head">
+            <h3 class="card-title heading">Annual Incident Activity</h3>
+            <button class="card-action" onclick="openModal('Annual Incident Activity — detail', activityModalHtml())">Details <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></button>
+          </div>
           <div class="card-body">
             <div style="display:flex; align-items:flex-end; gap:14px; height:140px;">
               <div style="display:flex; flex-direction:column; align-items:center; gap:4px; flex:1;"><div style="display:flex; align-items:flex-end; gap:3px; height:110px;"><div style="width:10px; height:20px; background:var(--critical); border-radius:2px 2px 0 0;"></div><div style="width:10px; height:70px; background:var(--good); border-radius:2px 2px 0 0;"></div></div><span style="font-size:10.5px; color:var(--text-muted);">Mar</span></div>
@@ -471,7 +526,10 @@
             </div>
           </div>
           <div>
-            <div class="card-title heading" style="margin-bottom:8px;">Credential Hygiene</div>
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+              <div class="card-title heading">Credential Hygiene</div>
+              <button class="card-action" onclick="openModal('Credential Hygiene — detail', hygieneModalHtml())">Details <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></button>
+            </div>
             <div style="display:flex; flex-direction:column; gap:5px;">
               <div class="legend-chip"><span class="legend-swatch" style="background:var(--accent);"></span>Strong · 62%</div>
               <div class="legend-chip"><span class="legend-swatch" style="background:var(--c3);"></span>Weak · 28%</div>
@@ -484,7 +542,7 @@
       <div class="card">
         <div class="card-head">
           <h3 class="card-title heading">Weak Node Credentials</h3>
-          <a class="view-all" href="#">View All <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></a>
+          <button class="card-action" onclick="openModal('Weak Node Credentials — full list', credentialsModalHtml())">View All <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></button>
         </div>
         <div class="card-body" style="display:flex; flex-direction:column; gap:11px;">
           <div style="display:flex; align-items:center; gap:12px;"><span class="mono" style="width:70px; font-size:12px;">WN-07</span><div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:18%; background:var(--critical);"></div></div><span class="mono" style="width:38px; font-size:12px; text-align:right;">18%</span></div>
@@ -496,6 +554,18 @@
       </div>
 
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="app-modal-overlay" onclick="if(event.target===this) closeModal()">
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h3 class="modal-title" id="app-modal-title">Title</h3>
+      <button class="modal-close" onclick="closeModal()" aria-label="Close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="app-modal-body"></div>
   </div>
 </div>
 
@@ -743,6 +813,251 @@
       // no server at this origin, or no hardware data yet — stay in demo mode
     });
   }
+
+  // ---------------------------------------------------------------
+  // MODAL SYSTEM
+  // ---------------------------------------------------------------
+  window.openModal = function (title, bodyHtml) {
+    document.getElementById('app-modal-title').textContent = title;
+    document.getElementById('app-modal-body').innerHTML = bodyHtml;
+    document.getElementById('app-modal-overlay').classList.add('visible');
+    var menu = document.getElementById('avatar-menu');
+    if (menu) menu.classList.remove('visible');
+  };
+  window.closeModal = function () {
+    document.getElementById('app-modal-overlay').classList.remove('visible');
+  };
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      closeModal();
+      var menu = document.getElementById('avatar-menu');
+      if (menu) menu.classList.remove('visible');
+    }
+  });
+
+  function simNote(text) {
+    return '<div class="modal-note">' + (text || 'Simulated data for this demo — not wired to a live source yet.') + '</div>';
+  }
+  function rows(items) {
+    return items.map(function (it) {
+      return '<div class="status-row"><div class="status-left"><span class="status-dot" style="background:' + it.color + ';"></span>' + it.label + '</div><span class="mono">' + it.value + '</span></div>';
+    }).join('');
+  }
+
+  // ---------------------------------------------------------------
+  // SIDEBAR NAVIGATION
+  // ---------------------------------------------------------------
+  var NAV_SECTIONS = {
+    'dashboard': 'section-dashboard',
+    'site-coverage': 'section-site-coverage',
+    'device-security': 'section-device-security'
+  };
+
+  var NAV_PLACEHOLDER = {
+    'safety-exposure': {
+      title: 'Safety Exposure',
+      blurb: 'Aggregate exposure across every monitored site, rolling up fall/inactivity risk, equipment faults, and coverage gaps into one score.',
+      stats: [ { value: '18%', label: 'Overall exposure score' }, { value: '4', label: 'Sites tracked' }, { value: '2', label: 'Open high-severity items' } ]
+    },
+    'issues': {
+      title: 'Issues',
+      blurb: 'Open items across the fleet — from a offline wall node to a worker unit due for a firmware update.',
+      stats: [ { value: '9', label: 'Open issues' }, { value: '2', label: 'High priority' }, { value: '7', label: 'Resolved this month' } ]
+    },
+    'risk-score': {
+      title: 'Risk Score',
+      blurb: 'A single trending score combining incident severity, device security, and site coverage — see "Risk Level" on the Dashboard for the live gauge.',
+      stats: [ { value: '18', label: 'Current score (0-100, lower is safer)' }, { value: '-4', label: 'Change vs. last month' } ]
+    },
+    'reports': {
+      title: 'Reports',
+      blurb: 'Scheduled and on-demand exports — shift summaries, incident reports, and compliance packets.',
+      stats: [ { value: '12', label: 'Reports generated this month' }, { value: '3', label: 'Scheduled recurring' } ]
+    },
+    'settings': {
+      title: 'Settings',
+      blurb: 'Workspace, notification, and integration settings for this Bleep deployment.',
+      stats: [ { value: 'WALL1', label: 'Registered wall node ID' }, { value: '5000', label: 'Relay server port' } ]
+    },
+    'support': {
+      title: 'Support',
+      blurb: 'Reach the Bleep team, or check the on-device troubleshooting guide for wall nodes and wearables.',
+      stats: [ { value: '< 1hr', label: 'Typical response time' } ]
+    }
+  };
+
+  window.handleNav = function (key) {
+    document.querySelectorAll('.nav-item').forEach(function (el) { el.classList.remove('active'); });
+    var btn = document.getElementById('nav-' + key);
+    if (btn) btn.classList.add('active');
+
+    if (NAV_SECTIONS[key]) {
+      var target = document.getElementById(NAV_SECTIONS[key]);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+
+    var info = NAV_PLACEHOLDER[key];
+    if (!info) return;
+    var html = '<p>' + info.blurb + '</p>' +
+      info.stats.map(function (s) {
+        return '<div class="legend-chip" style="margin-bottom:8px;"><strong style="margin-right:6px;">' + s.value + '</strong>' + s.label + '</div>';
+      }).join('') +
+      simNote('This section is not built yet — showing a simulated preview.');
+    openModal(info.title, html);
+  };
+
+  // ---------------------------------------------------------------
+  // AVATAR MENU
+  // ---------------------------------------------------------------
+  window.toggleAvatarMenu = function (e) {
+    e.stopPropagation();
+    document.getElementById('avatar-menu').classList.toggle('visible');
+  };
+  document.addEventListener('click', function (e) {
+    var menu = document.getElementById('avatar-menu');
+    var wrap = document.getElementById('avatar-wrap');
+    if (menu && menu.classList.contains('visible') && !wrap.contains(e.target)) {
+      menu.classList.remove('visible');
+    }
+  });
+  window.profileModalHtml = function () {
+    return '<p>Signed in as <strong>J. Rao</strong>, Site Manager.</p>' + rows([
+      { color: 'var(--good)', label: 'Account status', value: 'Active' },
+      { color: 'var(--accent)', label: 'Sites assigned', value: '4' },
+      { color: 'var(--offline)', label: 'Last login', value: 'Just now' }
+    ]) + simNote();
+  };
+  window.preferencesModalHtml = function () {
+    return '<p>Notification and display preferences for this workspace.</p>' + rows([
+      { color: 'var(--good)', label: 'Distress alert push notifications', value: 'On' },
+      { color: 'var(--good)', label: 'Daily summary email', value: 'On' },
+      { color: 'var(--offline)', label: 'Dark theme', value: 'Off (light mode only)' }
+    ]) + simNote();
+  };
+  window.signOutModalHtml = function () {
+    return '<p>This is a simulated session — signing out has no effect in this demo.</p>' + simNote('No account system is connected yet.');
+  };
+
+  // ---------------------------------------------------------------
+  // SEARCH
+  // ---------------------------------------------------------------
+  var searchInput = document.getElementById('search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', function () {
+      var q = searchInput.value.trim().toLowerCase();
+      document.querySelectorAll('#roster-grid .worker-card').forEach(function (card) {
+        var idEl = card.querySelector('.worker-head span');
+        var id = idEl ? idEl.textContent.toLowerCase() : '';
+        var match = q === '' || id.indexOf(q) !== -1;
+        card.style.display = match ? '' : 'none';
+      });
+      if (q !== '') {
+        var target = document.getElementById('section-dashboard');
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // CARD DETAIL MODALS (dummy expanded data, matches each card's theme)
+  // ---------------------------------------------------------------
+  window.severityModalHtml = function () {
+    return '<p>Full incident severity breakdown across all monitored sites.</p>' + rows([
+      { color: 'var(--critical)', label: 'Critical', value: '3' },
+      { color: '#e0793c', label: 'High', value: '8' },
+      { color: '#e0a83c', label: 'Medium', value: '14' },
+      { color: 'var(--good)', label: 'Low', value: '22' },
+      { color: 'var(--offline)', label: 'Informational', value: '31' }
+    ]) + simNote();
+  };
+  window.mineMapModalHtml = function () {
+    return '<p>All wall nodes across the active tunnel network.</p>' + rows([
+      { color: 'var(--good)', label: 'WN-1 · Entrance', value: 'Operational' },
+      { color: 'var(--good)', label: 'WN-2 · Level 1', value: 'Operational' },
+      { color: 'var(--critical)', label: 'WN-3 · Level 2', value: 'Alert Active' },
+      { color: 'var(--offline)', label: 'WN-4 · Drift 3', value: 'Offline' }
+    ]) + simNote();
+  };
+  window.crewModalHtml = function () {
+    return '<p>Alerts logged by crew, June – August.</p>' + rows([
+      { color: 'var(--c1)', label: 'Crew A', value: '6' },
+      { color: 'var(--c2)', label: 'Crew B', value: '4' },
+      { color: 'var(--c3)', label: 'Crew C', value: '4' }
+    ]) + simNote();
+  };
+  window.certificatesModalHtml = function () {
+    return '<p>Device certificate status for all registered wall nodes.</p>' + rows([
+      { color: 'var(--good)', label: 'Valid', value: '12' },
+      { color: '#e0a83c', label: 'Expired', value: '1' },
+      { color: 'var(--critical)', label: 'Revoked', value: '0' },
+      { color: 'var(--c3)', label: 'Untrusted', value: '0' },
+      { color: '#e0a83c', label: 'Mismatched', value: '1' }
+    ]) + simNote();
+  };
+  window.exposureModalHtml = function () {
+    return '<p>Device exposure by category.</p>' + rows([
+      { color: 'var(--c3)', label: 'Weak Credentials', value: '35%' },
+      { color: 'var(--c1)', label: 'Open Channels', value: '25%' },
+      { color: 'var(--c4)', label: 'Outdated Firmware', value: '20%' },
+      { color: 'var(--c5)', label: 'Unencrypted Comms', value: '20%' }
+    ]) + simNote();
+  };
+  window.channelsModalHtml = function () {
+    return '<p>Utilization across every active radio channel and link.</p>' + rows([
+      { color: 'var(--accent)', label: 'ESP-NOW Ch 3', value: '82%' },
+      { color: 'var(--accent)', label: 'WiFi 2.4GHz Ch 6', value: '64%' },
+      { color: 'var(--accent)', label: 'WiFi 2.4GHz Ch 11', value: '41%' },
+      { color: 'var(--accent)', label: 'Local Relay Link', value: '18%' }
+    ]) + simNote();
+  };
+  window.activityModalHtml = function () {
+    return '<p>Distress events vs. normal status pings by month.</p>' + rows([
+      { color: 'var(--critical)', label: 'Mar', value: '2 distress' },
+      { color: 'var(--critical)', label: 'Apr', value: '1 distress' },
+      { color: 'var(--critical)', label: 'May', value: '3 distress' },
+      { color: 'var(--critical)', label: 'Jun', value: '1 distress' },
+      { color: 'var(--critical)', label: 'Jul', value: '2 distress' },
+      { color: 'var(--critical)', label: 'Aug', value: '1 distress' }
+    ]) + simNote();
+  };
+  window.hygieneModalHtml = function () {
+    return '<p>Credential strength across all registered wall nodes.</p>' + rows([
+      { color: 'var(--accent)', label: 'Strong', value: '62%' },
+      { color: 'var(--c3)', label: 'Weak', value: '28%' },
+      { color: 'var(--critical)', label: 'Default', value: '10%' }
+    ]) + simNote();
+  };
+  window.credentialsModalHtml = function () {
+    return '<p>All wall nodes flagged with below-target credential strength.</p>' + rows([
+      { color: 'var(--critical)', label: 'WN-07', value: '18%' },
+      { color: 'var(--critical)', label: 'WN-11', value: '24%' },
+      { color: 'var(--c3)', label: 'WN-04', value: '47%' },
+      { color: 'var(--c3)', label: 'WN-09', value: '55%' },
+      { color: 'var(--good)', label: 'WN-02', value: '73%' },
+      { color: 'var(--good)', label: 'WN-06', value: '81%' },
+      { color: 'var(--good)', label: 'WN-01', value: '88%' }
+    ]) + simNote();
+  };
+  window.riskTrendModalHtml = function () {
+    return '<p>Site-wide risk score, last 6 readings.</p>' + rows([
+      { color: 'var(--good)', label: 'Today', value: '18%' },
+      { color: 'var(--good)', label: '1 week ago', value: '22%' },
+      { color: 'var(--good)', label: '2 weeks ago', value: '19%' },
+      { color: '#e0a83c', label: '3 weeks ago', value: '31%' },
+      { color: 'var(--good)', label: '4 weeks ago', value: '17%' },
+      { color: 'var(--good)', label: '5 weeks ago', value: '20%' }
+    ]) + simNote();
+  };
+  window.eventLogModalHtml = function () {
+    return '<p>Full event history (this demo keeps the last 200 in memory).</p>' + rows([
+      { color: 'var(--good)', label: '14:31:48 · W2', value: 'STATUS · OK' },
+      { color: 'var(--good)', label: '14:31:33 · W1', value: 'STATUS · OK' },
+      { color: 'var(--offline)', label: '14:29:10 · W3', value: 'OFFLINE' },
+      { color: 'var(--good)', label: '14:28:52 · W2', value: 'STATUS · OK' },
+      { color: 'var(--good)', label: '14:28:37 · W1', value: 'STATUS · OK' }
+    ]) + simNote('Live mode replaces this with real events from /api/events.');
+  };
 
   render();
   pollLive();
