@@ -134,7 +134,7 @@
     <div class="topbar">
       <div style="display:flex; align-items:center; gap:12px;">
         <h1 class="heading" style="margin:0; font-size:18px; font-weight:700;">Dashboard</h1>
-        <div class="sim-flag">
+        <div class="sim-flag" id="sim-flag">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#a1720f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"></path></svg>
           <span class="mono" style="color:#a1720f; font-size:10.5px; font-weight:600; letter-spacing:0.03em;">SIMULATED DATA</span>
         </div>
@@ -195,7 +195,7 @@
 
       <div style="display:flex; flex-direction:column; gap:12px;">
         <h3 class="heading" style="margin:0; font-size:15px; font-weight:700;">Worker Roster</h3>
-        <div class="grid-3">
+        <div class="grid-3" id="roster-grid">
 
           <div class="worker-card" id="w1-card" style="border-color:#e2e6ea;">
             <div class="worker-head">
@@ -255,7 +255,7 @@
           <div class="card-head"><h3 class="card-title heading">Event Log</h3></div>
           <div style="max-height:260px; overflow-y:auto; padding:6px 18px;" id="event-log-list"></div>
         </div>
-        <div class="demo-panel">
+        <div class="demo-panel" id="demo-panel">
           <h3 class="heading" style="margin:0 0 4px; font-size:13px; font-weight:700; letter-spacing:0.02em;">DEMO &amp; TESTING CONTROLS</h3>
           <p style="margin:0 0 16px; font-size:12px; color:var(--text-muted);">Simulated inputs — not connected to hardware.</p>
           <div style="display:flex; flex-direction:column; gap:10px;">
@@ -605,7 +605,148 @@
     render();
   };
 
+  // ---------------------------------------------------------------
+  // LIVE MODE — polls the Flask relay (server/app.py) for real wall
+  // node telemetry. Only works when this page is served BY that
+  // server (same-origin relative fetches); opened as a static file,
+  // or from GitHub Pages, these fetches fail harmlessly and the page
+  // just stays in demo mode above.
+  // ---------------------------------------------------------------
+  var liveMode = false;
+  var LIVE_POLL_MS = 2000;
+  var STALE_MS = 15000;
+
+  function fmtLocalClock(isoOrDate) {
+    var d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+
+  function statusFromWorkerMsg(msg, now) {
+    var age = now - new Date(msg.serverReceivedAt).getTime();
+    if (age > STALE_MS) return 'OFFLINE';
+    var riskState = (msg.payload && msg.payload.riskState) || '';
+    if (msg.msgType === 'DISTRESS' || riskState === 'FALL_SUSPECTED') return 'FALL_SUSPECTED';
+    return 'OK';
+  }
+
+  function renderLiveRoster(workersObj) {
+    var now = Date.now();
+    var ids = Object.keys(workersObj).sort();
+    var grid = document.getElementById('roster-grid');
+    grid.innerHTML = '';
+    var alertNames = [];
+
+    ids.forEach(function (id) {
+      var msg = workersObj[id];
+      var status = statusFromWorkerMsg(msg, now);
+      if (status === 'FALL_SUSPECTED') alertNames.push(id);
+
+      var pillColor = status === 'FALL_SUSPECTED' ? '#d03b3b' : (status === 'OFFLINE' ? '#8b93a0' : '#0ca30c');
+      var borderColor = status === 'FALL_SUSPECTED' ? '#edb3b3' : '#e2e6ea';
+      var payload = msg.payload || {};
+      var motion = payload.motionEnergy != null ? payload.motionEnergy + ' g' : '—';
+      var rssi = msg.espnowRssi != null ? msg.espnowRssi + ' dBm' : '—';
+      var battery = payload.battery != null ? payload.battery : '—';
+      var seq = msg.seq != null ? msg.seq : '—';
+      var secsInactive = payload.secondsInactive != null ? payload.secondsInactive : payload.secondsSinceMotion;
+      var timerLabel = secsInactive != null ? (Math.round(secsInactive) + 's / 20s') : '— / 20s';
+      var fillPct = secsInactive != null ? Math.min(100, Math.round((secsInactive / 20) * 100)) : 0;
+      var fillColor = status === 'FALL_SUSPECTED' ? '#d03b3b' : '#0f766e';
+      var trackColor = status === 'FALL_SUSPECTED' ? '#f1d4d4' : '#e2e6ea';
+
+      var card = document.createElement('div');
+      card.className = 'worker-card';
+      card.style.borderColor = borderColor;
+      card.style.opacity = status === 'OFFLINE' ? '0.7' : '1';
+      card.innerHTML =
+        '<div class="worker-head">' +
+          '<span class="heading" style="font-size:15px; font-weight:700;">' + id + '</span>' +
+          '<span class="status-pill" style="background:' + pillColor + ';">' + status.replace('_', ' ') + '</span>' +
+        '</div>' +
+        '<div class="worker-metrics">' +
+          '<div><div class="metric-label">Motion Energy</div><div class="mono metric-value">' + motion + '</div></div>' +
+          '<div><div class="metric-label">RSSI</div><div class="mono metric-value">' + rssi + '</div></div>' +
+          '<div><div class="metric-label">Battery</div><div class="mono metric-value">' + battery + '</div></div>' +
+          '<div><div class="metric-label">Last Seq</div><div class="mono metric-value">' + seq + '</div></div>' +
+        '</div>' +
+        '<div>' +
+          '<div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted); margin-bottom:4px;"><span>Inactivity Timer</span><span class="mono">' + timerLabel + '</span></div>' +
+          '<div class="progress-track" style="background:' + trackColor + ';"><div class="progress-fill" style="width:' + fillPct + '%; background:' + fillColor + ';"></div></div>' +
+        '</div>';
+      grid.appendChild(card);
+    });
+
+    return { count: ids.length, alertNames: alertNames };
+  }
+
+  function renderLiveEvents(list) {
+    var logEl = document.getElementById('event-log-list');
+    logEl.innerHTML = '';
+    list.forEach(function (msg) {
+      var dotColor = msg.msgType === 'DISTRESS' ? '#d03b3b' : '#0ca30c';
+      var payload = msg.payload || {};
+      var detail = payload.riskState || payload.hazardType || '';
+      var row = document.createElement('div');
+      row.className = 'event-row';
+      row.innerHTML =
+        '<span class="event-dot" style="background:' + dotColor + ';"></span>' +
+        '<span class="mono event-time">' + fmtLocalClock(msg.serverReceivedAt) + '</span>' +
+        '<span class="event-text">' + msg.workerId + ' · ' + msg.msgType + ' · ' + detail + '</span>';
+      logEl.appendChild(row);
+    });
+  }
+
+  function enterLiveMode() {
+    if (liveMode) return;
+    liveMode = true;
+    var demoPanel = document.getElementById('demo-panel');
+    if (demoPanel) {
+      demoPanel.innerHTML =
+        '<h3 class="heading" style="margin:0 0 4px; font-size:13px; font-weight:700; letter-spacing:0.02em;">LIVE MODE</h3>' +
+        '<p style="margin:0; font-size:12px; color:var(--text-muted);">Receiving real telemetry from wall node hardware — demo controls are disabled while live data is connected.</p>';
+    }
+    var simFlag = document.getElementById('sim-flag');
+    if (simFlag) simFlag.style.display = 'none';
+  }
+
+  function pollLive() {
+    Promise.all([
+      fetch('/api/workers').then(function (r) { return r.ok ? r.json() : Promise.reject(); }),
+      fetch('/api/events?limit=8').then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+    ]).then(function (results) {
+      var workersObj = results[0];
+      var eventsList = results[1];
+      if (Object.keys(workersObj).length === 0) return; // server up, no hardware data yet — stay in demo mode
+
+      enterLiveMode();
+      var summary = renderLiveRoster(workersObj);
+      renderLiveEvents(eventsList);
+
+      var alertsEl = document.getElementById('active-alerts-value');
+      alertsEl.textContent = String(summary.alertNames.length);
+      alertsEl.style.color = summary.alertNames.length > 0 ? '#d03b3b' : '#14181f';
+
+      var banner = document.getElementById('alert-banner');
+      banner.classList.toggle('visible', summary.alertNames.length > 0);
+      if (summary.alertNames.length > 0) {
+        banner.querySelector('.alert-text').textContent =
+          'FALL SUSPECTED — Worker ' + summary.alertNames.join(', ') + ' — immediate response required';
+      }
+
+      var nowStr = fmtLocalClock(new Date());
+      document.getElementById('last-update').textContent = nowStr;
+      document.getElementById('topbar-clock').textContent = nowStr;
+
+      var workersTile = document.querySelector('.grid-4 .stat-card:nth-child(1) .stat-value');
+      if (workersTile) workersTile.textContent = String(summary.count);
+    }).catch(function () {
+      // no server at this origin, or no hardware data yet — stay in demo mode
+    });
+  }
+
   render();
+  pollLive();
+  setInterval(pollLive, LIVE_POLL_MS);
 })();
 </script>
 </body>
