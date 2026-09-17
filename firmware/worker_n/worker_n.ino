@@ -607,6 +607,25 @@ void updateAlarm() {
 // ============================================================
 // ENVIRONMENTAL & VITALS SENSING
 // ============================================================
+
+// DEMO FALLBACK: whenever a finger is detected but the real
+// checkForBeat() pulse detector hasn't produced a value yet (see the
+// diagnostic beat-print in updateHeartRate() -- if that never prints
+// on your module, this is why HR/SpO2 always showed 0), a plausible,
+// gently-drifting reading is shown instead so a finger on the sensor
+// always shows *something* on the dashboard rather than a dead 0.
+// Real detected values always take priority the moment they exist --
+// this only fills in while heartRateBpm is still 0.
+//
+// Declared here, ahead of updateSpo2Estimate() below, because it
+// reads usingDummyVitals -- Arduino only auto-generates forward
+// prototypes for functions, not variables, so a global used before
+// its definition still fails to compile otherwise.
+long dummyHrBase = 74;
+float dummySpo2Base = 97.5;
+unsigned long lastDummyVitalsUpdateMs = 0;
+bool usingDummyVitals = false;
+
 void updateSpo2Estimate() {
   if (!max30102Found) { spo2Pct = 0; return; }
   // Skip the real ratio-of-ratios math entirely while heartRateBpm is
@@ -633,19 +652,6 @@ void updateSpo2Estimate() {
   spo2IrMin = 999999; spo2IrMax = 0;
   spo2RedMin = 999999; spo2RedMax = 0;
 }
-
-// DEMO FALLBACK: whenever a finger is detected but the real
-// checkForBeat() pulse detector hasn't produced a value yet (see the
-// diagnostic beat-print in updateHeartRate() -- if that never prints
-// on your module, this is why HR/SpO2 always showed 0), a plausible,
-// gently-drifting reading is shown instead so a finger on the sensor
-// always shows *something* on the dashboard rather than a dead 0.
-// Real detected values always take priority the moment they exist --
-// this only fills in while heartRateBpm is still 0.
-long dummyHrBase = 74;
-float dummySpo2Base = 97.5;
-unsigned long lastDummyVitalsUpdateMs = 0;
-bool usingDummyVitals = false;
 
 void updateDummyVitalsIfNeeded() {
   unsigned long now = millis();
@@ -718,6 +724,14 @@ void readOtherSensors() {
 // Named per-sensor threshold checks (thresholds from the trained
 // model) plus a joint tinyML anomaly check. Skipped once alarmActive
 // is already set, same as the fall logic not re-triggering itself.
+// Per user spec: the alarm now latches ONLY on a confirmed fall (see
+// detectFall()) or the SOS button (see checkSOS()). This function no
+// longer triggers alarmActive for anything else -- heat, gas,
+// heart-rate/SpO2, soil moisture, and the tinyML joint-anomaly score
+// are still computed below (so the dashboard/Serial readouts and
+// lastAnomalyScore keep showing real live values), but none of them
+// call sendDistressPacket() or set alarmActive anymore. Re-enable a
+// specific block below if you want that hazard back later.
 void checkEnvironmentalHazards() {
   if (alarmActive) return;
 
@@ -725,79 +739,6 @@ void checkEnvironmentalHazards() {
   float perFeatureError[TINYML_N_FEATURES];
   buildFeatureVector(features);
   lastAnomalyScore = tinyMLInfer(features, perFeatureError);
-
-  if (!isnan(temperatureC) && temperatureC >= TEMP_DANGER_C) tempHazardSamples++; else tempHazardSamples = 0;
-  if (tempHazardSamples >= REQUIRED_HAZARD_SAMPLES) {
-    tempHazardSamples = 0;
-    alarmActive = true;
-    sendDistressPacket("HEAT_STRESS", "HEAT_STRESS");
-    return;
-  }
-
-  if (airQualityRaw >= MQ135_DANGER_RAW) mq135HazardSamples++; else mq135HazardSamples = 0;
-  if (mq135HazardSamples >= REQUIRED_HAZARD_SAMPLES) {
-    mq135HazardSamples = 0;
-    alarmActive = true;
-    sendDistressPacket("GAS_DANGER", "TOXIC_GAS");
-    return;
-  }
-
-  if (combustibleGasRaw >= MQ4_DANGER_RAW) mq4HazardSamples++; else mq4HazardSamples = 0;
-  if (mq4HazardSamples >= REQUIRED_HAZARD_SAMPLES) {
-    mq4HazardSamples = 0;
-    alarmActive = true;
-    sendDistressPacket("GAS_DANGER", "COMBUSTIBLE_GAS");
-    return;
-  }
-
-  if (heartRateBpm > 0 && heartRateBpm >= HR_DANGER_HIGH_BPM) hrHighHazardSamples++; else hrHighHazardSamples = 0;
-  if (hrHighHazardSamples >= REQUIRED_HAZARD_SAMPLES) {
-    hrHighHazardSamples = 0;
-    alarmActive = true;
-    sendDistressPacket("HIGH_HEART_RATE", "HIGH_HEART_RATE");
-    return;
-  }
-
-  if (heartRateBpm > 0 && heartRateBpm <= HR_DANGER_LOW_BPM) hrLowHazardSamples++; else hrLowHazardSamples = 0;
-  if (hrLowHazardSamples >= REQUIRED_HAZARD_SAMPLES) {
-    hrLowHazardSamples = 0;
-    alarmActive = true;
-    sendDistressPacket("LOW_HEART_RATE", "LOW_HEART_RATE");
-    return;
-  }
-
-  if (spo2Pct > 0 && spo2Pct <= SPO2_DANGER_LOW_PCT) spo2HazardSamples++; else spo2HazardSamples = 0;
-  if (spo2HazardSamples >= REQUIRED_HAZARD_SAMPLES) {
-    spo2HazardSamples = 0;
-    alarmActive = true;
-    sendDistressPacket("LOW_SPO2", "LOW_SPO2");
-    return;
-  }
-
-  if (soilMoisturePct >= SOIL_MOISTURE_DANGER_PCT) soilHazardSamples++; else soilHazardSamples = 0;
-  if (soilHazardSamples >= REQUIRED_HAZARD_SAMPLES) {
-    soilHazardSamples = 0;
-    alarmActive = true;
-    sendDistressPacket("WATER_INGRESS", "WATER_INGRESS");
-    return;
-  }
-
-  if (lastAnomalyScore >= TINYML_ANOMALY_THRESHOLD) mlAnomalyHazardSamples++; else mlAnomalyHazardSamples = 0;
-  if (mlAnomalyHazardSamples >= REQUIRED_HAZARD_SAMPLES) {
-    mlAnomalyHazardSamples = 0;
-    int worstIdx = 0;
-    for (int i = 1; i < TINYML_N_FEATURES; i++) {
-      if (perFeatureError[i] > perFeatureError[worstIdx]) worstIdx = i;
-    }
-    static const char* FEATURE_LABELS[TINYML_N_FEATURES] = {
-      "TEMP", "HUMIDITY", "AIR_QUALITY", "COMBUSTIBLE_GAS",
-      "HEART_RATE", "SPO2", "SOIL_MOISTURE", "MOTION"
-    };
-    char hazardType[16];
-    snprintf(hazardType, sizeof(hazardType), "ML_%s", FEATURE_LABELS[worstIdx]);
-    alarmActive = true;
-    sendDistressPacket("ML_ANOMALY", hazardType);
-  }
 }
 
 // ============================================================
