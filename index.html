@@ -64,7 +64,15 @@
   .event-text { font-size: 13px; }
 
   .grid-5 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
   .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+
+  .gauge-row { margin-bottom: 9px; }
+  .gauge-row:last-child { margin-bottom: 0; }
+  .gauge-head { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
+
+  .status-flag.demo { background: #eef2fb; border: 1px solid #c7d2f0; }
+  .status-flag.demo .mono { color: #35478c; }
 
   .alert-banner { display: none; align-items: center; gap: 12px; background: #fbe9e9; border: 1px solid #edb3b3; border-left: 5px solid var(--critical); border-radius: 6px; padding: 14px 18px; }
   .alert-banner.visible { display: flex; }
@@ -74,7 +82,7 @@
     .app-shell { flex-direction: column; }
     .sidebar { width: 100%; flex-direction: row; align-items: center; padding: 12px 16px; }
     .sidebar-search { display: none; }
-    .grid-5, .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-5, .grid-4, .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 </style>
 </head>
@@ -100,9 +108,12 @@
 
     <div class="topbar">
       <div style="display:flex; align-items:center; gap:12px;">
-        <h1 class="heading" style="margin:0; font-size:18px; font-weight:700;">Fall &amp; Inactivity Detection</h1>
+        <h1 class="heading" style="margin:0; font-size:18px; font-weight:700;">Worker Safety Monitoring</h1>
       </div>
-      <div style="display:flex; align-items:center; gap:16px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div class="status-flag demo" id="demo-flag" style="display:none;">
+          <span class="mono">SIMULATED DATA</span>
+        </div>
         <div class="status-flag waiting" id="connection-flag">
           <span class="mono" id="connection-flag-text">CONNECTING...</span>
         </div>
@@ -112,7 +123,7 @@
     <div class="content">
 
       <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-        <span class="heading" style="font-size:11.5px; font-weight:600; color:var(--accent); background:var(--accent-soft); border:1px solid #bfe3de; border-radius:20px; padding:4px 11px;">Feature 1 · Live Hardware Data</span>
+        <span class="heading" style="font-size:11.5px; font-weight:600; color:var(--accent); background:var(--accent-soft); border:1px solid #bfe3de; border-radius:20px; padding:4px 11px;">Fall, Gas, Heat, Vitals &amp; Water-Ingress Detection · Live Hardware Data</span>
         <div style="display:flex; align-items:center; gap:6px; background:#ffffff; border:1px solid var(--border); border-radius:20px; padding:5px 12px; margin-left:auto;">
           <span class="status-dot" id="wallnode-dot" style="width:7px; height:7px; border-radius:50%; background:var(--waiting);"></span>
           <span id="wallnode-text" style="font-size:12.5px; font-weight:500;">Wall Node · Connecting...</span>
@@ -139,6 +150,31 @@
         <div class="stat-card">
           <div class="stat-label">Last Update</div>
           <div class="mono" id="stat-last-update" style="font-size:17px; font-weight:600;">—</div>
+        </div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <h3 class="heading" style="margin:0; font-size:15px; font-weight:700;">Environmental &amp; Hazard Overview</h3>
+        <div class="grid-4" id="hazard-overview-grid" style="display:none;">
+          <div class="stat-card">
+            <div class="stat-label">Highest Temperature</div>
+            <div class="mono stat-value" id="stat-temp">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Highest Gas Reading (MQ-135 / MQ-4)</div>
+            <div class="mono stat-value" id="stat-gas" style="font-size:18px;">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Worst Heart Rate / SpO₂</div>
+            <div class="mono stat-value" id="stat-vitals" style="font-size:18px;">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Highest Soil Moisture</div>
+            <div class="mono stat-value" id="stat-soil">—</div>
+          </div>
+        </div>
+        <div class="card" id="hazard-overview-empty">
+          <div class="empty-state">No environmental/vitals data yet — waiting for a worker to report.</div>
         </div>
       </div>
 
@@ -176,6 +212,67 @@
 
   var lastPollOk = false;
   var allWorkers = {};
+
+  // Mirrors the *_DANGER_* thresholds in firmware/worker_node.ino --
+  // keep these two in sync if either changes. Used only to color a
+  // reading red before its worker actually crosses into a DISTRESS
+  // riskState, so a supervisor sees a value trending toward danger,
+  // not just the moment it fires.
+  var THRESHOLDS = {
+    tempDangerC: 40.0,
+    mq135DangerRaw: 4000,
+    mq4DangerRaw: 3000,
+    hrDangerHighBpm: 130,
+    hrDangerLowBpm: 45,
+    spo2DangerLowPct: 90,
+    soilMoistureDangerPct: 80
+  };
+
+  // Maps a raw reading onto a 0-100 "how close to the firmware's
+  // DANGER threshold is this" scale, for the gauge bars on each
+  // worker card. 100 always means "at or past the same threshold
+  // worker_node.ino uses to latch a DISTRESS alert" -- these gauges
+  // are meant to show a value trending toward danger, not a
+  // calibrated absolute measurement (especially true for the MQ-135/
+  // MQ-4 raw ADC readings, which aren't calibrated ppm values).
+  function riskPct(kind, value) {
+    if (value == null || isNaN(value)) return 0;
+    switch (kind) {
+      case 'temp':
+        return Math.max(0, Math.min(100, (value / THRESHOLDS.tempDangerC) * 100));
+      case 'gas135':
+        return Math.max(0, Math.min(100, (value / THRESHOLDS.mq135DangerRaw) * 100));
+      case 'gas4':
+        return Math.max(0, Math.min(100, (value / THRESHOLDS.mq4DangerRaw) * 100));
+      case 'hr': {
+        if (value <= 0) return 0; // 0 = no reading, not a flatline
+        var mid = (THRESHOLDS.hrDangerLowBpm + THRESHOLDS.hrDangerHighBpm) / 2;
+        var span = (THRESHOLDS.hrDangerHighBpm - THRESHOLDS.hrDangerLowBpm) / 2;
+        return Math.max(0, Math.min(100, (Math.abs(value - mid) / span) * 100));
+      }
+      case 'spo2':
+        if (value <= 0) return 0; // 0 = no reading
+        return Math.max(0, Math.min(100, ((100 - value) / (100 - THRESHOLDS.spo2DangerLowPct)) * 100));
+      case 'soil':
+        return Math.max(0, Math.min(100, (value / THRESHOLDS.soilMoistureDangerPct) * 100));
+      default:
+        return 0;
+    }
+  }
+
+  function riskColor(pct) {
+    if (pct >= 100) return 'var(--critical)';
+    if (pct >= 70) return '#c8790a';
+    return 'var(--good)';
+  }
+
+  function gaugeRow(label, pct, valueText) {
+    var color = riskColor(pct);
+    return '<div class="gauge-row">' +
+      '<div class="gauge-head"><span>' + label + '</span><span class="mono">' + valueText + '</span></div>' +
+      '<div class="progress-track"><div class="progress-fill" style="width:' + Math.round(pct) + '%; background:' + color + ';"></div></div>' +
+    '</div>';
+  }
 
   // Every age comes from the server as "ageMs" -- milliseconds
   // elapsed since that message/heartbeat arrived, computed fresh on
@@ -244,6 +341,26 @@
       var rssi = msg.espnowRssi != null ? msg.espnowRssi + ' dBm' : '—';
       var battery = payload.battery != null ? payload.battery : '—'; // always null today — no battery sensor on worker_node.ino yet
       var seq = msg.seq != null ? msg.seq : '—';
+
+      // Environmental & vitals -- '—' means "no reading yet" (sensor
+      // not wired up, or MAX30102 with no finger contact), never a
+      // real zero. Colored red once a value crosses the same danger
+      // threshold worker_node.ino uses to latch a DISTRESS alert.
+      var hasTemp = payload.temperatureC != null;
+      var tempDanger = hasTemp && payload.temperatureC >= THRESHOLDS.tempDangerC;
+      var hasGas = payload.airQualityRaw != null || payload.combustibleGasRaw != null;
+      var gasDanger = (payload.airQualityRaw != null && payload.airQualityRaw >= THRESHOLDS.mq135DangerRaw) ||
+                      (payload.combustibleGasRaw != null && payload.combustibleGasRaw >= THRESHOLDS.mq4DangerRaw);
+      var gasText = hasGas ? (payload.airQualityRaw != null ? payload.airQualityRaw.toFixed(0) : '—') + ' / ' +
+                             (payload.combustibleGasRaw != null ? payload.combustibleGasRaw.toFixed(0) : '—') : '—';
+      var hasHr = payload.heartRateBpm != null && payload.heartRateBpm > 0;
+      var hrDanger = hasHr && (payload.heartRateBpm >= THRESHOLDS.hrDangerHighBpm || payload.heartRateBpm <= THRESHOLDS.hrDangerLowBpm);
+      var hasSpo2 = payload.spo2Pct != null && payload.spo2Pct > 0;
+      var spo2Danger = hasSpo2 && payload.spo2Pct <= THRESHOLDS.spo2DangerLowPct;
+      var vitalsText = (hasHr ? payload.heartRateBpm.toFixed(0) + ' bpm' : '—') + ' / ' + (hasSpo2 ? payload.spo2Pct.toFixed(0) + '%' : '—');
+      var vitalsDanger = hrDanger || spo2Danger;
+      var hasSoil = payload.soilMoisturePct != null;
+      var soilDanger = hasSoil && payload.soilMoisturePct >= THRESHOLDS.soilMoistureDangerPct;
       var secsInactive = payload.secondsInactive != null ? payload.secondsInactive : payload.secondsSinceMotion;
       // For a healthy worker this keeps climbing in real time even
       // between polls: the worker's own value was accurate as of
@@ -272,8 +389,18 @@
           '<div><div class="metric-label">RSSI</div><div class="mono metric-value">' + rssi + '</div></div>' +
           '<div><div class="metric-label">Battery</div><div class="mono metric-value">' + battery + '</div></div>' +
           '<div><div class="metric-label">Last Seq</div><div class="mono metric-value">' + seq + '</div></div>' +
+          '<div><div class="metric-label">Temperature (DHT11)</div><div class="mono metric-value" style="color:' + (tempDanger ? 'var(--critical)' : 'var(--text)') + ';">' + (hasTemp ? payload.temperatureC.toFixed(1) + ' °C' : '—') + '</div></div>' +
+          '<div><div class="metric-label">Humidity (DHT11)</div><div class="mono metric-value">' + (payload.humidityPct != null ? payload.humidityPct.toFixed(0) + '%' : '—') + '</div></div>' +
+          '<div><div class="metric-label">Pressure (BMP180)</div><div class="mono metric-value">' + (payload.pressureHPa != null ? payload.pressureHPa.toFixed(0) + ' hPa' : '—') + '</div></div>' +
+          '<div><div class="metric-label">Gas raw (MQ-135 / MQ-4)</div><div class="mono metric-value" style="color:' + (gasDanger ? 'var(--critical)' : 'var(--text)') + ';">' + gasText + '</div></div>' +
+          '<div><div class="metric-label">Heart rate / SpO₂ (MAX30102)</div><div class="mono metric-value" style="color:' + (vitalsDanger ? 'var(--critical)' : 'var(--text)') + ';">' + vitalsText + '</div></div>' +
+          '<div><div class="metric-label">Soil moisture</div><div class="mono metric-value" style="color:' + (soilDanger ? 'var(--critical)' : 'var(--text)') + ';">' + (hasSoil ? payload.soilMoisturePct.toFixed(0) + '%' : '—') + '</div></div>' +
         '</div>' +
-        '<div>' +
+        gaugeRow('Heat (DHT11)', riskPct('temp', payload.temperatureC), hasTemp ? (payload.temperatureC.toFixed(1) + ' °C') : '—') +
+        gaugeRow('Gas (MQ-135 / MQ-4)', Math.max(riskPct('gas135', payload.airQualityRaw), riskPct('gas4', payload.combustibleGasRaw)), gasText) +
+        gaugeRow('Vitals (MAX30102)', Math.max(riskPct('hr', payload.heartRateBpm), riskPct('spo2', payload.spo2Pct)), vitalsText) +
+        gaugeRow('Water Ingress (soil)', riskPct('soil', payload.soilMoisturePct), hasSoil ? (payload.soilMoisturePct.toFixed(0) + '%') : '—') +
+        '<div style="margin-top:10px;">' +
           '<div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted); margin-bottom:4px;"><span>Inactivity Timer</span><span class="mono">' + timerLabel + '</span></div>' +
           '<div class="progress-track" style="background:' + trackColor + ';"><div class="progress-fill" style="width:' + fillPct + '%; background:' + fillColor + ';"></div></div>' +
         '</div>';
@@ -318,6 +445,217 @@
 
   document.getElementById('search-input').addEventListener('input', applyFilter);
 
+  // ------------------------------------------------------------
+  // Environmental & Hazard Overview -- worst-case-across-workers KPI
+  // row, same idea as MineGuard-Pro's/IoT-Safety-Monitoring-System's
+  // gas/vitals gauge rows, adapted to this dashboard's design tokens.
+  // ------------------------------------------------------------
+  function renderHazardOverview(workersObj) {
+    var ids = Object.keys(workersObj);
+    var grid = document.getElementById('hazard-overview-grid');
+    var empty = document.getElementById('hazard-overview-empty');
+    if (ids.length === 0) {
+      grid.style.display = 'none';
+      empty.style.display = '';
+      return;
+    }
+    grid.style.display = '';
+    empty.style.display = 'none';
+
+    var worstTemp = null, worstGas135 = null, worstGas4 = null, worstHr = null, worstSpo2 = null, worstSoil = null;
+    ids.forEach(function (id) {
+      var p = (workersObj[id].payload) || {};
+      if (p.temperatureC != null && (worstTemp == null || p.temperatureC > worstTemp)) worstTemp = p.temperatureC;
+      if (p.airQualityRaw != null && (worstGas135 == null || p.airQualityRaw > worstGas135)) worstGas135 = p.airQualityRaw;
+      if (p.combustibleGasRaw != null && (worstGas4 == null || p.combustibleGasRaw > worstGas4)) worstGas4 = p.combustibleGasRaw;
+      if (p.heartRateBpm > 0 && (worstHr == null || riskPct('hr', p.heartRateBpm) > riskPct('hr', worstHr))) worstHr = p.heartRateBpm;
+      if (p.spo2Pct > 0 && (worstSpo2 == null || p.spo2Pct < worstSpo2)) worstSpo2 = p.spo2Pct;
+      if (p.soilMoisturePct != null && (worstSoil == null || p.soilMoisturePct > worstSoil)) worstSoil = p.soilMoisturePct;
+    });
+
+    function setKpi(elId, text, pct) {
+      var el = document.getElementById(elId);
+      el.textContent = text;
+      el.style.color = riskColor(pct);
+    }
+    setKpi('stat-temp', worstTemp != null ? worstTemp.toFixed(1) + ' °C' : '—', riskPct('temp', worstTemp));
+    setKpi('stat-gas', (worstGas135 != null ? worstGas135.toFixed(0) : '—') + ' / ' + (worstGas4 != null ? worstGas4.toFixed(0) : '—'),
+           Math.max(riskPct('gas135', worstGas135), riskPct('gas4', worstGas4)));
+    setKpi('stat-vitals', (worstHr != null ? worstHr.toFixed(0) + ' bpm' : '—') + ' / ' + (worstSpo2 != null ? worstSpo2.toFixed(0) + '%' : '—'),
+           Math.max(riskPct('hr', worstHr), riskPct('spo2', worstSpo2)));
+    setKpi('stat-soil', worstSoil != null ? worstSoil.toFixed(0) + '%' : '—', riskPct('soil', worstSoil));
+  }
+
+  // ------------------------------------------------------------
+  // Shared rendering path for both a real relay response and the
+  // demo fallback below -- same data shape either way (see
+  // buildDemoSnapshot()), so nothing here needs to know which one
+  // it's looking at.
+  // ------------------------------------------------------------
+  function applySnapshot(workersObj, eventsList, nodesObj, isDemo) {
+    allWorkers = workersObj;
+
+    document.getElementById('demo-flag').style.display = isDemo ? 'flex' : 'none';
+    document.getElementById('stat-network').textContent = isDemo ? 'Simulated' : 'Online';
+    document.getElementById('stat-network').style.color = isDemo ? 'var(--waiting)' : 'var(--good)';
+
+    var summary = renderRoster(workersObj);
+    applyFilter();
+    renderEvents(eventsList);
+    renderHazardOverview(workersObj);
+
+    var nodeIds = Object.keys(nodesObj);
+    var onlineNodeCount = nodeIds.filter(function (id) {
+      return nodesObj[id].ageMs <= NODE_STALE_MS;
+    }).length;
+    document.getElementById('stat-nodes').textContent = String(onlineNodeCount);
+    document.getElementById('stat-nodes').style.color = isDemo ? 'var(--waiting)' : (onlineNodeCount > 0 ? 'var(--good)' : 'var(--critical)');
+
+    var workerCount = Object.keys(workersObj).length;
+    document.getElementById('stat-workers').textContent = String(workerCount);
+    document.getElementById('stat-alerts').textContent = String(summary.alertNames.length);
+    document.getElementById('stat-alerts').style.color = summary.alertNames.length > 0 ? 'var(--critical)' : 'var(--text)';
+
+    var banner = document.getElementById('alert-banner');
+    banner.classList.toggle('visible', summary.alertNames.length > 0);
+    if (summary.alertNames.length > 0) {
+      document.getElementById('alert-text').textContent =
+        'ALERT — ' + summary.alertNames.join(', ') + ' — immediate response required' + (isDemo ? ' (simulated)' : '');
+    }
+
+    var newestAgeMs = null;
+    Object.keys(workersObj).forEach(function (id) {
+      var a = workersObj[id].ageMs;
+      if (newestAgeMs == null || a < newestAgeMs) newestAgeMs = a;
+    });
+    document.getElementById('stat-last-update').textContent = fmtAge(newestAgeMs);
+
+    if (isDemo) {
+      setConnectionFlag('waiting', 'DEMO FEED');
+      setWallNodeStatus('var(--waiting)', 'Wall Node · No relay reachable — showing simulated data');
+      return;
+    }
+
+    // Wall-node connectivity comes from its own heartbeat
+    // (/api/nodes), not from whether a worker happens to be
+    // reporting — a wall node with no worker nearby is still a
+    // wall node that's online.
+    if (onlineNodeCount === 0) {
+      setConnectionFlag('down', 'WALL NODE OFFLINE');
+      setWallNodeStatus('var(--critical)', 'Wall Node · Offline (no heartbeat)');
+    } else if (workerCount === 0) {
+      setConnectionFlag('waiting', 'NODE OK · NO WORKER DATA');
+      setWallNodeStatus('var(--good)', 'Wall Node · Connected (no worker yet)');
+    } else if (newestAgeMs != null && newestAgeMs > STALE_MS) {
+      setConnectionFlag('waiting', 'NODE OK · STALE WORKER DATA');
+      setWallNodeStatus('var(--good)', 'Wall Node · Connected');
+    } else {
+      setConnectionFlag('live', 'LIVE');
+      setWallNodeStatus('var(--good)', 'Wall Node · Connected');
+    }
+  }
+
+  // ------------------------------------------------------------
+  // DEMO FALLBACK -- used whenever the relay (server/app.py or
+  // wall_node.ino's own server) isn't reachable, which is exactly
+  // what happens when this file is opened directly as file:// with
+  // no hardware in the room. Produces the same shape /api/workers,
+  // /api/events, /api/nodes would, so applySnapshot() above can't
+  // tell the difference. Two demo workers drift slowly and take
+  // turns cycling through every hazard type on a timer, purely so
+  // the full UI (alerts, gauges, event log) is visible without
+  // hardware -- this is demo data ONLY, never mistaken for a real
+  // feed thanks to the "SIMULATED DATA" flag and amber styling above.
+  // ------------------------------------------------------------
+  var DEMO_HAZARD_CYCLE = ['FALL_SUSPECTED', 'SOS', 'HEAT_STRESS', 'GAS_DANGER', 'LOW_SPO2', 'WATER_INGRESS'];
+  var demoHazardIdx = 0;
+  var nextDemoHazardAt = 0;
+  var demoEventLog = [];
+  var demoWorkersState = {
+    W1: { temperatureC: 29, humidityPct: 55, pressureHPa: 1009, airQualityRaw: 480, combustibleGasRaw: 220, heartRateBpm: 76, spo2Pct: 98, soilMoisturePct: 14, motionEnergy: 12, seq: 0, distress: null, distressUntil: 0 },
+    W2: { temperatureC: 31, humidityPct: 60, pressureHPa: 1007, airQualityRaw: 530, combustibleGasRaw: 260, heartRateBpm: 82, spo2Pct: 97, soilMoisturePct: 9, motionEnergy: 15, seq: 0, distress: null, distressUntil: 0 }
+  };
+
+  function jitter(v, amt, min, max) {
+    return Math.max(min, Math.min(max, v + (Math.random() * 2 - 1) * amt));
+  }
+
+  function tickDemoWorkers(now) {
+    if (nextDemoHazardAt === 0) nextDemoHazardAt = now + 6000;
+
+    Object.keys(demoWorkersState).forEach(function (id) {
+      var w = demoWorkersState[id];
+      if (w.distress && now > w.distressUntil) {
+        w.distress = null;
+        w.seq++;
+        demoEventLog.unshift({ workerId: id, nodeId: 'WALL1', msgType: 'STATUS', payload: { riskState: 'OK' } });
+      }
+      if (!w.distress) {
+        w.temperatureC = jitter(w.temperatureC, 0.3, 24, 34);
+        w.humidityPct = jitter(w.humidityPct, 1, 40, 70);
+        w.pressureHPa = jitter(w.pressureHPa, 0.5, 1000, 1015);
+        w.airQualityRaw = jitter(w.airQualityRaw, 20, 300, 900);
+        w.combustibleGasRaw = jitter(w.combustibleGasRaw, 15, 150, 600);
+        w.heartRateBpm = jitter(w.heartRateBpm, 2, 65, 95);
+        w.spo2Pct = jitter(w.spo2Pct, 0.3, 95, 99);
+        w.soilMoisturePct = jitter(w.soilMoisturePct, 2, 5, 30);
+      }
+      w.motionEnergy = jitter(w.motionEnergy, 3, 5, 25);
+    });
+
+    if (now >= nextDemoHazardAt) {
+      var freeWorkers = Object.keys(demoWorkersState).filter(function (id) { return !demoWorkersState[id].distress; });
+      if (freeWorkers.length > 0) {
+        var id = freeWorkers[Math.floor(Math.random() * freeWorkers.length)];
+        var hazard = DEMO_HAZARD_CYCLE[demoHazardIdx % DEMO_HAZARD_CYCLE.length];
+        demoHazardIdx++;
+        var w = demoWorkersState[id];
+        w.distress = hazard;
+        w.distressUntil = now + 9000;
+        w.seq++;
+        if (hazard === 'HEAT_STRESS') w.temperatureC = 41.5;
+        if (hazard === 'GAS_DANGER') w.combustibleGasRaw = 3300;
+        if (hazard === 'LOW_SPO2') { w.spo2Pct = 87; w.heartRateBpm = 122; }
+        if (hazard === 'WATER_INGRESS') w.soilMoisturePct = 86;
+        var hazardType = hazard === 'SOS' ? 'SOS_BUTTON' : hazard;
+        demoEventLog.unshift({ workerId: id, nodeId: 'WALL1', msgType: 'DISTRESS', payload: { riskState: hazard, hazardType: hazardType } });
+      }
+      nextDemoHazardAt = now + 15000 + Math.random() * 5000;
+    }
+
+    if (demoEventLog.length > 30) demoEventLog.length = 30;
+  }
+
+  function buildDemoSnapshot() {
+    var now = Date.now();
+    tickDemoWorkers(now);
+
+    var workers = {};
+    Object.keys(demoWorkersState).forEach(function (id) {
+      var w = demoWorkersState[id];
+      var riskState = w.distress || 'OK';
+      var hazardType = w.distress ? (w.distress === 'SOS' ? 'SOS_BUTTON' : w.distress) : '';
+      workers[id] = {
+        workerId: id, nodeId: 'WALL1', msgType: w.distress ? 'DISTRESS' : 'STATUS', seq: w.seq,
+        espnowRssi: Math.round(jitter(-55, 4, -75, -40)), ageMs: Math.round(Math.random() * 400),
+        payload: {
+          riskState: riskState, hazardType: hazardType,
+          motionEnergy: w.motionEnergy,
+          secondsSinceMotion: w.distress ? 24 : Math.random() * 4,
+          secondsInactive: (w.distress === 'FALL_SUSPECTED') ? 24 : undefined,
+          motionEnergyAtTrigger: w.distress ? 0.2 : 0, battery: null,
+          temperatureC: w.temperatureC, humidityPct: w.humidityPct, pressureHPa: w.pressureHPa,
+          airQualityRaw: w.airQualityRaw, combustibleGasRaw: w.combustibleGasRaw,
+          heartRateBpm: w.heartRateBpm, spo2Pct: w.spo2Pct, soilMoisturePct: w.soilMoisturePct
+        }
+      };
+    });
+
+    var events = demoEventLog.map(function (e, i) { return Object.assign({}, e, { ageMs: i * 4000 }); });
+    var nodes = { WALL1: { nodeId: 'WALL1', ageMs: 500 } };
+    return { workers: workers, events: events, nodes: nodes };
+  }
+
   function poll() {
     Promise.all([
       fetch('/api/workers').then(function (r) { return r.ok ? r.json() : Promise.reject(); }),
@@ -325,68 +663,11 @@
       fetch('/api/nodes').then(function (r) { return r.ok ? r.json() : Promise.reject(); })
     ]).then(function (results) {
       lastPollOk = true;
-      allWorkers = results[0];
-      var eventsList = results[1];
-      var allNodes = results[2];
-
-      document.getElementById('stat-network').textContent = 'Online';
-      document.getElementById('stat-network').style.color = 'var(--good)';
-
-      var summary = renderRoster(allWorkers);
-      applyFilter();
-      renderEvents(eventsList);
-
-      var nodeIds = Object.keys(allNodes);
-      var onlineNodeCount = nodeIds.filter(function (id) {
-        return allNodes[id].ageMs <= NODE_STALE_MS;
-      }).length;
-      document.getElementById('stat-nodes').textContent = String(onlineNodeCount);
-      document.getElementById('stat-nodes').style.color = onlineNodeCount > 0 ? 'var(--good)' : 'var(--critical)';
-
-      var workerCount = Object.keys(allWorkers).length;
-      document.getElementById('stat-workers').textContent = String(workerCount);
-      document.getElementById('stat-alerts').textContent = String(summary.alertNames.length);
-      document.getElementById('stat-alerts').style.color = summary.alertNames.length > 0 ? 'var(--critical)' : 'var(--text)';
-
-      var banner = document.getElementById('alert-banner');
-      banner.classList.toggle('visible', summary.alertNames.length > 0);
-      if (summary.alertNames.length > 0) {
-        document.getElementById('alert-text').textContent =
-          'ALERT — ' + summary.alertNames.join(', ') + ' — immediate response required';
-      }
-
-      var newestAgeMs = null;
-      Object.keys(allWorkers).forEach(function (id) {
-        var a = allWorkers[id].ageMs;
-        if (newestAgeMs == null || a < newestAgeMs) newestAgeMs = a;
-      });
-      document.getElementById('stat-last-update').textContent = fmtAge(newestAgeMs);
-
-      // Wall-node connectivity now comes from its own heartbeat
-      // (/api/nodes), not from whether a worker happens to be
-      // reporting — a wall node with no worker nearby is still a
-      // wall node that's online.
-      if (onlineNodeCount === 0) {
-        setConnectionFlag('down', 'WALL NODE OFFLINE');
-        setWallNodeStatus('var(--critical)', 'Wall Node · Offline (no heartbeat)');
-      } else if (workerCount === 0) {
-        setConnectionFlag('waiting', 'NODE OK · NO WORKER DATA');
-        setWallNodeStatus('var(--good)', 'Wall Node · Connected (no worker yet)');
-      } else if (newestAgeMs != null && newestAgeMs > STALE_MS) {
-        setConnectionFlag('waiting', 'NODE OK · STALE WORKER DATA');
-        setWallNodeStatus('var(--good)', 'Wall Node · Connected');
-      } else {
-        setConnectionFlag('live', 'LIVE');
-        setWallNodeStatus('var(--good)', 'Wall Node · Connected');
-      }
+      applySnapshot(results[0], results[1], results[2], false);
     }).catch(function () {
       lastPollOk = false;
-      setConnectionFlag('down', 'RELAY UNREACHABLE');
-      setWallNodeStatus('var(--offline)', 'Wall Node · Unknown');
-      document.getElementById('stat-network').textContent = 'Offline';
-      document.getElementById('stat-network').style.color = 'var(--critical)';
-      document.getElementById('stat-nodes').textContent = '—';
-      document.getElementById('stat-nodes').style.color = 'var(--text)';
+      var snap = buildDemoSnapshot();
+      applySnapshot(snap.workers, snap.events, snap.nodes, true);
     });
   }
 

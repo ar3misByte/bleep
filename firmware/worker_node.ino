@@ -4,10 +4,15 @@
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
+#include <DHT.h>
+#include <Adafruit_BMP085.h>
+#include <MAX30105.h>
+#include "heartRate.h"
 
 // ============================================================
-// SENSORA - WORKER ESP32
-// MPU6050 + FALL DETECTION + ESP-NOW ONLY -- no WiFi/internet
+// BLEEP - WORKER ESP32
+// MPU6050 fall detection + DHT11/BMP180/MQ-135/MQ-4/MAX30102/soil
+// moisture hazard sensing, all over ESP-NOW only -- no WiFi/internet
 // ESP32 Arduino Core 3.x compatible (wifi_tx_info_t send callback)
 // ============================================================
 
@@ -54,6 +59,26 @@ const unsigned long BUTTON_DEBOUNCE_MS = 50;
 const int SDA_PIN = 21;
 const int SCL_PIN = 22;
 
+// BMP180 and MAX30102 share the same I2C bus as the MPU6050 above --
+// all three sit at different addresses (0x68, 0x77, 0x57) so no
+// conflict, just three sensors_event_t sources on one Wire bus.
+
+
+// -------------------- DHT11 (TEMP / HUMIDITY) -----------------
+
+const int DHT_PIN = 27;
+#define DHT_TYPE DHT11
+
+
+// -------------------- ANALOG GAS / MOISTURE SENSORS -----------
+//
+// All three are plain analogRead() on ADC1 pins -- ADC2 shares
+// hardware with WiFi and reads garbage while the radio is active,
+// so these must stay off GPIO0/2/4/12-15/25-27.
+const int MQ135_PIN = 34;          // toxic/air-quality gas, raw ADC 0-4095
+const int MQ4_PIN = 35;            // combustible gas (methane/LPG), raw ADC 0-4095
+const int SOIL_MOISTURE_PIN = 32;  // water ingress / flooding at floor level
+
 
 // -------------------- ALERT OUTPUTS --------------------------
 
@@ -65,6 +90,11 @@ const int BUZZER_PIN = 4;
 
 // MPU is checked continuously at approximately 10 Hz
 const unsigned long SENSOR_INTERVAL_MS = 100;
+
+// DHT11 and BMP180 are read far slower than the IMU -- the DHT11
+// datasheet caps reliable reads at ~1 Hz, and there's no reason to
+// hammer the gas/soil ADCs faster than that either.
+const unsigned long ENV_SENSOR_INTERVAL_MS = 1000;
 
 
 // -------------------- STATUS TRANSMISSION --------------------
@@ -103,6 +133,30 @@ const int REQUIRED_IMPACT_SAMPLES = 2;
 
 
 // ============================================================
+// ENVIRONMENTAL & VITALS HAZARD THRESHOLDS
+// Starting values only -- tune using real testing, same caveat as
+// the fall-detection thresholds above. Gas thresholds referenced
+// against typical MQ-135/MQ-4 hobbyist-module ADC ranges (0-4095);
+// gas sensors especially need on-site calibration against a known
+// source, these are not calibrated ppm values.
+// ============================================================
+
+const float TEMP_DANGER_C = 40.0;              // heat stress
+const int MQ135_DANGER_RAW = 4000;             // toxic/air-quality gas
+const int MQ4_DANGER_RAW = 3000;               // combustible gas (methane/LPG) -- most safety-critical reading underground
+const float HR_DANGER_HIGH_BPM = 130.0;
+const float HR_DANGER_LOW_BPM = 45.0;
+const float SPO2_DANGER_LOW_PCT = 90.0;
+const float SOIL_MOISTURE_DANGER_PCT = 80.0;   // water ingress / flooding at floor level
+
+// Consecutive breaching samples required before latching an alarm --
+// same noise-rejection idea as REQUIRED_IMPACT_SAMPLES, checked at
+// the 100ms sensor tick rate, so 5 samples is roughly half a second
+// of sustained breach before anything latches.
+const int REQUIRED_HAZARD_SAMPLES = 5;
+
+
+// ============================================================
 // DEBUG
 // ============================================================
 
@@ -132,6 +186,22 @@ typedef struct __attribute__((packed)) {
 
   float motionEnergyAtTrigger;
 
+  float temperatureC;
+
+  float humidityPct;
+
+  float pressureHPa;
+
+  float airQualityRaw;
+
+  float combustibleGasRaw;
+
+  float heartRateBpm;
+
+  float spo2Pct;
+
+  float soilMoisturePct;
+
   uint32_t seq;
 
 } WorkerPacket;
@@ -145,6 +215,63 @@ WorkerPacket packet;
 // ============================================================
 
 Adafruit_MPU6050 mpu;
+
+
+// ============================================================
+// DHT11 / BMP180 / MAX30102
+// ============================================================
+
+DHT dht(DHT_PIN, DHT_TYPE);
+
+Adafruit_BMP085 bmp;
+bool bmpFound = false;
+
+MAX30105 particleSensor;
+bool max30102Found = false;
+
+
+// ============================================================
+// ENVIRONMENTAL & VITALS READINGS
+// 0 / NAN means "no reading yet" for a given sensor, never a real
+// measurement -- hazard checks below treat those as "not available"
+// rather than a dangerous value.
+// ============================================================
+
+float temperatureC = NAN;
+float humidityPct = NAN;
+float pressureHPa = NAN;
+float airQualityRaw = 0;
+float combustibleGasRaw = 0;
+float heartRateBpm = 0;
+float spo2Pct = 0;
+float soilMoisturePct = 0;
+
+unsigned long lastEnvSensorTime = 0;
+
+// Hazard debounce counters, one per environmental/vitals condition --
+// mirrors impactSamples' role for the fall path.
+int tempHazardSamples = 0;
+int mq135HazardSamples = 0;
+int mq4HazardSamples = 0;
+int hrHighHazardSamples = 0;
+int hrLowHazardSamples = 0;
+int spo2HazardSamples = 0;
+int soilHazardSamples = 0;
+
+// Heart-rate beat detection (SparkFun checkForBeat() pattern):
+// average the last few beat-to-beat intervals rather than trusting
+// any single one, which is far too noisy on its own.
+const byte RATE_ARRAY_SIZE = 4;
+long rateArray[RATE_ARRAY_SIZE];
+byte rateSpot = 0;
+unsigned long lastBeatMs = 0;
+
+// SpO2 is estimated from the ratio of AC/DC swing between the red and
+// IR channels over a rolling ~1s window -- a widely used approximation,
+// not a calibrated medical reading, but good enough for a hazard
+// threshold. Reset every ENV_SENSOR_INTERVAL_MS in updateSpo2Estimate().
+long spo2IrMin = 999999, spo2IrMax = 0;
+long spo2RedMin = 999999, spo2RedMax = 0;
 
 
 // ============================================================
@@ -266,7 +393,7 @@ void printPacket() {
 
   Serial.println();
   Serial.println("========================================");
-  Serial.println("       OUTGOING SENSORA PACKET");
+  Serial.println("       OUTGOING BLEEP PACKET");
   Serial.println("========================================");
 
   Serial.print("workerId: ");
@@ -290,10 +417,229 @@ void printPacket() {
   Serial.print("motionEnergyAtTrigger: ");
   Serial.println(packet.motionEnergyAtTrigger, 2);
 
+  Serial.print("temperatureC: ");
+  Serial.println(packet.temperatureC, 2);
+
+  Serial.print("humidityPct: ");
+  Serial.println(packet.humidityPct, 2);
+
+  Serial.print("pressureHPa: ");
+  Serial.println(packet.pressureHPa, 2);
+
+  Serial.print("airQualityRaw (MQ-135): ");
+  Serial.println(packet.airQualityRaw, 0);
+
+  Serial.print("combustibleGasRaw (MQ-4): ");
+  Serial.println(packet.combustibleGasRaw, 0);
+
+  Serial.print("heartRateBpm: ");
+  Serial.println(packet.heartRateBpm, 1);
+
+  Serial.print("spo2Pct: ");
+  Serial.println(packet.spo2Pct, 1);
+
+  Serial.print("soilMoisturePct: ");
+  Serial.println(packet.soilMoisturePct, 1);
+
   Serial.print("seq: ");
   Serial.println(packet.seq);
 
   Serial.println("========================================");
+}
+
+
+// ============================================================
+// ENVIRONMENTAL & VITALS SENSING
+// ============================================================
+
+// Copies the latest environmental/vitals readings into an outgoing
+// packet -- called from every send path (STATUS, fall DISTRESS, and
+// every triggerHazardAlert() distress) so the dashboard always has
+// live gauge data regardless of which packet carried it.
+void fillEnvironmentalFields(WorkerPacket &p) {
+  p.temperatureC = temperatureC;
+  p.humidityPct = humidityPct;
+  p.pressureHPa = pressureHPa;
+  p.airQualityRaw = airQualityRaw;
+  p.combustibleGasRaw = combustibleGasRaw;
+  p.heartRateBpm = heartRateBpm;
+  p.spo2Pct = spo2Pct;
+  p.soilMoisturePct = soilMoisturePct;
+}
+
+// SpO2 estimate from the ratio of AC/DC swing between the red and IR
+// channels accumulated by updateHeartRate() over the last ~1s window.
+// See the spo2Ir*/spo2Red* comment above for what this is and isn't.
+void updateSpo2Estimate() {
+  if (!max30102Found) {
+    spo2Pct = 0;
+    return;
+  }
+
+  long irAc = spo2IrMax - spo2IrMin;
+  long redAc = spo2RedMax - spo2RedMin;
+  long irDc = (spo2IrMax + spo2IrMin) / 2;
+  long redDc = (spo2RedMax + spo2RedMin) / 2;
+
+  if (irDc <= 0 || redDc <= 0 || irAc <= 0 || heartRateBpm <= 0) {
+    // No usable finger/skin contact this window -- 0 means "no
+    // reading," same convention as heartRateBpm.
+    spo2Pct = 0;
+  } else {
+    float ratioOfRatios = ((float)redAc / redDc) / ((float)irAc / irDc);
+    float estimate = 110.0 - (25.0 * ratioOfRatios);
+    spo2Pct = constrain(estimate, 70.0, 100.0);
+  }
+
+  spo2IrMin = 999999; spo2IrMax = 0;
+  spo2RedMin = 999999; spo2RedMax = 0;
+}
+
+// Called every loop() iteration (not gated by an interval) so beat
+// timing stays accurate -- this mirrors pollButton()'s reasoning.
+void updateHeartRate() {
+  if (!max30102Found) return;
+
+  long ir = particleSensor.getIR();
+
+  if (ir < 50000) {
+    // No finger/skin contact detected -- zero out so hazard checks
+    // treat this as "no reading," not "flatline."
+    heartRateBpm = 0;
+    return;
+  }
+
+  long red = particleSensor.getRed();
+  if (ir < spo2IrMin) spo2IrMin = ir;
+  if (ir > spo2IrMax) spo2IrMax = ir;
+  if (red < spo2RedMin) spo2RedMin = red;
+  if (red > spo2RedMax) spo2RedMax = red;
+
+  if (checkForBeat(ir)) {
+    unsigned long now = millis();
+    long delta = now - lastBeatMs;
+    lastBeatMs = now;
+
+    float bpm = 60000.0 / delta;
+    if (bpm > 20 && bpm < 255) {
+      rateArray[rateSpot++] = (long)bpm;
+      rateSpot %= RATE_ARRAY_SIZE;
+
+      long total = 0;
+      for (byte x = 0; x < RATE_ARRAY_SIZE; x++) total += rateArray[x];
+      heartRateBpm = total / (float)RATE_ARRAY_SIZE;
+    }
+  }
+}
+
+// Called on ENV_SENSOR_INTERVAL_MS -- DHT11 and the gas/soil ADCs
+// don't need (and shouldn't be read at) the IMU's 10 Hz rate.
+void readEnvironmentalSensors() {
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+  if (!isnan(h) && !isnan(t)) {
+    humidityPct = h;
+    temperatureC = t;
+  } // else: keep the last good reading -- DHT11 read failures are common and shouldn't blank the value out
+
+  if (bmpFound) {
+    pressureHPa = bmp.readPressure() / 100.0;
+  }
+
+  airQualityRaw = analogRead(MQ135_PIN);
+  combustibleGasRaw = analogRead(MQ4_PIN);
+
+  // Inverted so a rising percentage always means "wetter" -- most
+  // resistive soil moisture modules read HIGH-ish when dry and drop
+  // as moisture increases; flip this if your specific module wires
+  // it the other way.
+  int soilRaw = analogRead(SOIL_MOISTURE_PIN);
+  soilMoisturePct = 100.0 - ((soilRaw / 4095.0) * 100.0);
+
+  updateSpo2Estimate();
+}
+
+// Only evaluated while state == NORMAL, same as the prolonged
+// inactivity check -- an environmental/vitals hazard shouldn't
+// interrupt an already-latched or already-confirming fall sequence.
+void checkEnvironmentalHazards() {
+
+  if (!isnan(temperatureC) && temperatureC >= TEMP_DANGER_C) {
+    tempHazardSamples++;
+  } else {
+    tempHazardSamples = 0;
+  }
+  if (tempHazardSamples >= REQUIRED_HAZARD_SAMPLES) {
+    tempHazardSamples = 0;
+    triggerHazardAlert("HEAT_STRESS", "HEAT_STRESS", "HEAT STRESS DETECTED");
+    return;
+  }
+
+  if (airQualityRaw >= MQ135_DANGER_RAW) {
+    mq135HazardSamples++;
+  } else {
+    mq135HazardSamples = 0;
+  }
+  if (mq135HazardSamples >= REQUIRED_HAZARD_SAMPLES) {
+    mq135HazardSamples = 0;
+    triggerHazardAlert("GAS_DANGER", "TOXIC_GAS", "TOXIC GAS DETECTED");
+    return;
+  }
+
+  if (combustibleGasRaw >= MQ4_DANGER_RAW) {
+    mq4HazardSamples++;
+  } else {
+    mq4HazardSamples = 0;
+  }
+  if (mq4HazardSamples >= REQUIRED_HAZARD_SAMPLES) {
+    mq4HazardSamples = 0;
+    triggerHazardAlert("GAS_DANGER", "COMBUSTIBLE_GAS", "COMBUSTIBLE GAS DETECTED");
+    return;
+  }
+
+  if (heartRateBpm > 0 && heartRateBpm >= HR_DANGER_HIGH_BPM) {
+    hrHighHazardSamples++;
+  } else {
+    hrHighHazardSamples = 0;
+  }
+  if (hrHighHazardSamples >= REQUIRED_HAZARD_SAMPLES) {
+    hrHighHazardSamples = 0;
+    triggerHazardAlert("HIGH_HEART_RATE", "HIGH_HEART_RATE", "HIGH HEART RATE DETECTED");
+    return;
+  }
+
+  if (heartRateBpm > 0 && heartRateBpm <= HR_DANGER_LOW_BPM) {
+    hrLowHazardSamples++;
+  } else {
+    hrLowHazardSamples = 0;
+  }
+  if (hrLowHazardSamples >= REQUIRED_HAZARD_SAMPLES) {
+    hrLowHazardSamples = 0;
+    triggerHazardAlert("LOW_HEART_RATE", "LOW_HEART_RATE", "LOW HEART RATE DETECTED");
+    return;
+  }
+
+  if (spo2Pct > 0 && spo2Pct <= SPO2_DANGER_LOW_PCT) {
+    spo2HazardSamples++;
+  } else {
+    spo2HazardSamples = 0;
+  }
+  if (spo2HazardSamples >= REQUIRED_HAZARD_SAMPLES) {
+    spo2HazardSamples = 0;
+    triggerHazardAlert("LOW_SPO2", "LOW_SPO2", "LOW BLOOD OXYGEN DETECTED");
+    return;
+  }
+
+  if (soilMoisturePct >= SOIL_MOISTURE_DANGER_PCT) {
+    soilHazardSamples++;
+  } else {
+    soilHazardSamples = 0;
+  }
+  if (soilHazardSamples >= REQUIRED_HAZARD_SAMPLES) {
+    soilHazardSamples = 0;
+    triggerHazardAlert("WATER_INGRESS", "WATER_INGRESS", "WATER INGRESS DETECTED");
+    return;
+  }
 }
 
 
@@ -342,6 +688,9 @@ void sendStatusPacket() {
 
   packet.motionEnergyAtTrigger =
     0.0;
+
+
+  fillEnvironmentalFields(packet);
 
 
   packet.seq =
@@ -471,6 +820,9 @@ void triggerFall() {
     motionEnergyAtTrigger;
 
 
+  fillEnvironmentalFields(packet);
+
+
   packet.seq =
     sequenceNumber++;
 
@@ -523,17 +875,18 @@ void triggerFall() {
 
 
 // ============================================================
-// MANUAL SOS (button press during normal monitoring)
+// GENERIC LATCHED HAZARD ALERT
 // ============================================================
 //
-// Reuses the same "latched alarm" behavior as an automatic fall
-// (state = FALL_CONFIRMED, LED/buzzer on, routine STATUS paused) but
-// with riskState/hazardType marked "SOS" instead of "FALL_SUSPECTED"
-// so the dashboard can tell a worker-triggered SOS apart from an
-// automatically detected fall -- they're both genuine distress, but
-// not the same event.
+// Shared by every non-fall distress source (SOS button, prolonged
+// inactivity, and the environmental/vitals hazards below): same
+// latched-alarm behavior as triggerFall() (state = FALL_CONFIRMED,
+// LED/buzzer on, routine STATUS paused, requires a button ack to
+// clear) but with riskState/hazardType describing which condition
+// fired, so the dashboard can tell every distress source apart --
+// they're all genuine distress, but not the same event.
 
-void triggerSOS() {
+void triggerHazardAlert(const char* riskState, const char* hazardType, const char* bannerLabel) {
 
   state = FALL_CONFIRMED;
 
@@ -545,7 +898,9 @@ void triggerSOS() {
   Serial.println();
   Serial.println();
   Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-  Serial.println("        !!! SOS BUTTON TRIGGERED !!!");
+  Serial.print("        !!! ");
+  Serial.print(bannerLabel);
+  Serial.println(" !!!");
   Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   Serial.println("LED    : ON");
   Serial.println("BUZZER : ON");
@@ -557,81 +912,36 @@ void triggerSOS() {
   memset(&packet, 0, sizeof(packet));
   strncpy(packet.workerId, WORKER_ID, sizeof(packet.workerId) - 1);
   packet.msgType = 1;
-  strncpy(packet.riskState, "SOS", sizeof(packet.riskState) - 1);
-  strncpy(packet.hazardType, "SOS_BUTTON", sizeof(packet.hazardType) - 1);
+  strncpy(packet.riskState, riskState, sizeof(packet.riskState) - 1);
+  strncpy(packet.hazardType, hazardType, sizeof(packet.hazardType) - 1);
   packet.motionEnergy = motionEnergy;
   packet.secondsSinceMotion = (millis() - lastMotionTime) / 1000.0;
   packet.motionEnergyAtTrigger = motionEnergyAtTrigger;
+  fillEnvironmentalFields(packet);
   packet.seq = sequenceNumber++;
 
-  Serial.println(">>> IMMEDIATE SOS PACKET");
+  Serial.print(">>> IMMEDIATE ");
+  Serial.print(bannerLabel);
+  Serial.println(" PACKET");
   printPacket();
 
   esp_err_t result = esp_now_send(WALL_MAC, (uint8_t*)&packet, sizeof(packet));
   if (result == ESP_OK) {
-    Serial.println(">>> SOS PACKET HANDED TO ESP-NOW");
+    Serial.println(">>> PACKET HANDED TO ESP-NOW");
   } else {
-    Serial.print(">>> SOS SEND ERROR: ");
+    Serial.print(">>> SEND ERROR: ");
     Serial.println(result);
   }
 
   Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 }
 
-
-// ============================================================
-// PROLONGED INACTIVITY (no impact required)
-// ============================================================
-//
-// Same latched-alarm behavior as triggerFall(), but riskState/
-// hazardType marked "INACTIVITY" -- this fires purely from the
-// worker not moving for FALL_CONFIRMATION_TIME_MS, with no impact
-// ever detected, so the dashboard can tell it apart from an actual
-// impact-based fall.
+void triggerSOS() {
+  triggerHazardAlert("SOS", "SOS_BUTTON", "SOS BUTTON TRIGGERED");
+}
 
 void triggerInactivityAlert() {
-
-  state = FALL_CONFIRMED;
-
-  motionEnergyAtTrigger = motionEnergy;
-
-  digitalWrite(LED_PIN, HIGH);
-  digitalWrite(BUZZER_PIN, HIGH);
-
-  Serial.println();
-  Serial.println();
-  Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-  Serial.println("     !!! PROLONGED INACTIVITY !!!");
-  Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-  Serial.println("LED    : ON");
-  Serial.println("BUZZER : ON");
-  Serial.print("LED_PIN readback: ");
-  Serial.println(digitalRead(LED_PIN));
-  Serial.print("BUZZER_PIN readback: ");
-  Serial.println(digitalRead(BUZZER_PIN));
-
-  memset(&packet, 0, sizeof(packet));
-  strncpy(packet.workerId, WORKER_ID, sizeof(packet.workerId) - 1);
-  packet.msgType = 1;
-  strncpy(packet.riskState, "INACTIVITY", sizeof(packet.riskState) - 1);
-  strncpy(packet.hazardType, "INACTIVITY", sizeof(packet.hazardType) - 1);
-  packet.motionEnergy = motionEnergy;
-  packet.secondsSinceMotion = (millis() - lastMotionTime) / 1000.0;
-  packet.motionEnergyAtTrigger = motionEnergyAtTrigger;
-  packet.seq = sequenceNumber++;
-
-  Serial.println(">>> IMMEDIATE INACTIVITY PACKET");
-  printPacket();
-
-  esp_err_t result = esp_now_send(WALL_MAC, (uint8_t*)&packet, sizeof(packet));
-  if (result == ESP_OK) {
-    Serial.println(">>> INACTIVITY PACKET HANDED TO ESP-NOW");
-  } else {
-    Serial.print(">>> INACTIVITY SEND ERROR: ");
-    Serial.println(result);
-  }
-
-  Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+  triggerHazardAlert("INACTIVITY", "INACTIVITY", "PROLONGED INACTIVITY");
 }
 
 
@@ -658,6 +968,16 @@ void onButtonPressed() {
     impactSamples = 0;
     impactTime = millis();
     confirmationStartTime = 0;
+    // Clear every hazard debounce counter too -- otherwise an
+    // acknowledged environmental alarm could immediately re-latch
+    // from samples counted before the ack.
+    tempHazardSamples = 0;
+    mq135HazardSamples = 0;
+    mq4HazardSamples = 0;
+    hrHighHazardSamples = 0;
+    hrLowHazardSamples = 0;
+    spo2HazardSamples = 0;
+    soilHazardSamples = 0;
     digitalWrite(LED_PIN, LOW);
     digitalWrite(BUZZER_PIN, LOW);
     sendStatusPacket(); // immediate update -- don't wait for the next STATUS_INTERVAL_MS tick
@@ -876,6 +1196,24 @@ void printDebug() {
       Serial.println("FALL_CONFIRMED");
       break;
   }
+
+  Serial.print("[ENV]  T=");
+  Serial.print(temperatureC, 1);
+  Serial.print("C | H=");
+  Serial.print(humidityPct, 1);
+  Serial.print("% | P=");
+  Serial.print(pressureHPa, 1);
+  Serial.print("hPa | MQ135=");
+  Serial.print(airQualityRaw, 0);
+  Serial.print(" | MQ4=");
+  Serial.print(combustibleGasRaw, 0);
+  Serial.print(" | HR=");
+  Serial.print(heartRateBpm, 0);
+  Serial.print("bpm | SpO2=");
+  Serial.print(spo2Pct, 0);
+  Serial.print("% | Soil=");
+  Serial.print(soilMoisturePct, 0);
+  Serial.println("%");
 }
 
 
@@ -941,7 +1279,7 @@ void setup() {
 
   Serial.println();
   Serial.println("========================================");
-  Serial.println("       SENSORA WORKER ESP32");
+  Serial.println("       BLEEP WORKER ESP32");
   Serial.println("========================================");
 
 
@@ -1024,6 +1362,40 @@ void setup() {
 
   previousZ =
     accel.acceleration.z;
+
+
+  // ==========================================================
+  // DHT11 / BMP180 / MAX30102 / GAS & SOIL ADCs
+  // ==========================================================
+  //
+  // Unlike the MPU6050 above, a missing environmental/vitals sensor
+  // does not halt the board -- fall detection is the safety-critical
+  // feature and must keep running even if, say, the MAX30102 isn't
+  // wired up yet. Each sensor just reports 0/NaN ("no reading") if
+  // it's not found, which the hazard checks already treat as
+  // "not available."
+
+  dht.begin();
+  Serial.println("DHT11 initialized (temperature/humidity)");
+
+  bmpFound = bmp.begin();
+  Serial.println(bmpFound ? "BMP180 FOUND" : "[WARN] BMP180 NOT FOUND -- pressure readings disabled");
+
+  max30102Found = particleSensor.begin(Wire, I2C_SPEED_FAST);
+  if (max30102Found) {
+    byte ledBrightness = 60;
+    byte sampleAverage = 4;
+    byte ledMode = 2;      // red + IR
+    int sampleRate = 100;
+    int pulseWidth = 411;
+    int adcRange = 4096;
+    particleSensor.setup(ledBrightness, sampleAverage, ledMode, sampleRate, pulseWidth, adcRange);
+    Serial.println("MAX30102 FOUND");
+  } else {
+    Serial.println("[WARN] MAX30102 NOT FOUND -- heart rate/SpO2 readings disabled");
+  }
+
+  Serial.println("MQ-135, MQ-4 and soil moisture read directly via analogRead(), no init needed");
 
 
   // ==========================================================
@@ -1145,6 +1517,9 @@ void setup() {
   lastMotionTime =
     millis();
 
+  lastEnvSensorTime =
+    millis();
+
 
   // ==========================================================
   // READY
@@ -1192,11 +1567,35 @@ void setup() {
     " seconds"
   );
 
+  Serial.print("Heat stress threshold: ");
+  Serial.print(TEMP_DANGER_C, 1);
+  Serial.println(" C");
+
+  Serial.print("Toxic gas (MQ-135) threshold: ");
+  Serial.println(MQ135_DANGER_RAW);
+
+  Serial.print("Combustible gas (MQ-4) threshold: ");
+  Serial.println(MQ4_DANGER_RAW);
+
+  Serial.print("Heart rate danger range: ");
+  Serial.print(HR_DANGER_LOW_BPM, 0);
+  Serial.print(" - ");
+  Serial.print(HR_DANGER_HIGH_BPM, 0);
+  Serial.println(" bpm");
+
+  Serial.print("SpO2 danger threshold: <= ");
+  Serial.print(SPO2_DANGER_LOW_PCT, 0);
+  Serial.println("%");
+
+  Serial.print("Water ingress (soil moisture) threshold: >= ");
+  Serial.print(SOIL_MOISTURE_DANGER_PCT, 0);
+  Serial.println("%");
+
 
   Serial.println("----------------------------------------");
 
   Serial.println(
-    "SENSORA WORKER READY"
+    "BLEEP WORKER READY"
   );
 
   Serial.println();
@@ -1219,6 +1618,32 @@ void loop() {
   // ==========================================================
 
   pollButton();
+
+
+  // ==========================================================
+  // 0b. HEART RATE BEAT DETECTION -- like the button, this needs
+  //     every loop iteration for accurate beat timing, not just the
+  //     100ms sensor tick.
+  // ==========================================================
+
+  updateHeartRate();
+
+
+  // ==========================================================
+  // 0c. ENVIRONMENTAL SENSORS (DHT11 / BMP180 / MQ-135 / MQ-4 /
+  //     soil moisture) -- far slower than the IMU, own interval.
+  // ==========================================================
+
+  if (
+    now - lastEnvSensorTime >=
+    ENV_SENSOR_INTERVAL_MS
+  ) {
+
+    lastEnvSensorTime =
+      now;
+
+    readEnvironmentalSensors();
+  }
 
 
   // ==========================================================
@@ -1282,20 +1707,35 @@ void loop() {
       }
 
 
-      if (
+      // Environmental/vitals hazards (gas, heat, heart rate, SpO2,
+      // water ingress) -- immediate, no 20s confirmation delay like
+      // a fall, because there's no "did the worker just move a lot"
+      // ambiguity to rule out for these. Skipped if the inactivity
+      // check just above already latched an alarm this tick.
+      if (state == NORMAL) {
+        checkEnvironmentalHazards();
+      }
+
+
+      // Guarded the same way -- checkEnvironmentalHazards() (or the
+      // inactivity check above) may have just latched an alarm this
+      // tick, and impact detection must not then overwrite that with
+      // state = SETTLING.
+      if (state == NORMAL && (
         accelerationMagnitude >=
         IMPACT_THRESHOLD
-      ) {
+      )) {
 
         impactSamples++;
 
-      } else {
+      } else if (state == NORMAL) {
 
         impactSamples = 0;
       }
 
 
       if (
+        state == NORMAL &&
         impactSamples >=
         REQUIRED_IMPACT_SAMPLES
       ) {

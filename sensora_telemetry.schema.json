@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://sensora.local/schemas/telemetry.schema.json",
-  "title": "Sensora Wall-Node -> Dashboard Telemetry Message",
-  "description": "One JSON object per HTTP POST from a wall (anchor) node to the dashboard server, over WiFi. Envelope fields are always present; 'payload' shape depends on msgType. Covers Feature 1 (fall/inactivity detection) only — extend msgType/payload as later features are added, don't redesign the envelope.",
+  "$id": "https://bleep.local/schemas/telemetry.schema.json",
+  "title": "Bleep Wall-Node -> Dashboard Telemetry Message",
+  "description": "One JSON object per HTTP POST (or same-shape in-memory record, in the peer-to-peer wall_node.ino path) from a wall (anchor) node to the dashboard. Envelope fields are always present; 'payload' shape depends on msgType. Covers fall/inactivity detection plus environmental and vitals hazard sensing (DHT11, BMP180, MQ-135, MQ-4, MAX30102, soil moisture) — extend msgType/payload as later features are added, don't redesign the envelope.",
   "type": "object",
   "required": ["schemaVersion", "msgType", "workerId", "nodeId", "seq", "timestamp", "payload"],
   "properties": {
@@ -45,13 +45,28 @@
     }
   },
   "definitions": {
+    "environmentalFields": {
+      "type": "object",
+      "description": "Sent on every STATUS and DISTRESS message regardless of hazard type, so the dashboard always has live gauge data. 0 (or null for temperatureC/humidityPct/pressureHPa) means 'no reading yet' — sensor not wired up, or MAX30102 with no finger/skin contact — never a real measurement.",
+      "properties": {
+        "temperatureC": { "type": ["number", "null"], "description": "DHT11 ambient temperature." },
+        "humidityPct": { "type": ["number", "null"], "description": "DHT11 relative humidity." },
+        "pressureHPa": { "type": ["number", "null"], "description": "BMP180 barometric pressure." },
+        "airQualityRaw": { "type": "number", "description": "MQ-135 raw ADC reading (0-4095), toxic/air-quality gas. Not a calibrated ppm value — needs on-site calibration." },
+        "combustibleGasRaw": { "type": "number", "description": "MQ-4 raw ADC reading (0-4095), combustible gas (methane/LPG). Not a calibrated ppm value." },
+        "heartRateBpm": { "type": "number", "description": "MAX30102-derived heart rate. 0 means no finger/skin contact, not a flatline." },
+        "spo2Pct": { "type": "number", "description": "MAX30102-derived SpO2 estimate (ratio-of-ratios approximation, not medical-grade). 0 means no reading available." },
+        "soilMoisturePct": { "type": "number", "description": "Soil/floor moisture sensor, 0-100%, used as a water-ingress/flooding proxy." }
+      }
+    },
     "statusPayload": {
       "type": "object",
       "required": ["riskState", "motionEnergy", "secondsSinceMotion", "battery"],
+      "allOf": [{ "$ref": "#/definitions/environmentalFields" }],
       "properties": {
         "riskState": {
           "type": "string",
-          "description": "Treat as an open string on the dashboard, not a fixed set — right now only 'OK' and 'FALL_SUSPECTED' are ever sent, but WARNING/CRITICAL/SOS/OFFLINE will be added as later features land. Don't hardcode a switch statement that breaks on an unrecognized value."
+          "description": "Treat as an open string on the dashboard, not a fixed set — currently 'OK' for STATUS. Don't hardcode a switch statement that breaks on an unrecognized value."
         },
         "motionEnergy": {
           "type": "number",
@@ -70,19 +85,20 @@
     "distressPayload": {
       "type": "object",
       "required": ["hazardType", "riskState", "secondsInactive", "motionEnergyAtTrigger", "battery"],
+      "allOf": [{ "$ref": "#/definitions/environmentalFields" }],
       "properties": {
         "hazardType": {
           "type": "string",
-          "enum": ["FALL_SUSPECTED"],
-          "description": "Will grow to include SOS, GAS, etc. as those features are added — keep this an open string on the dashboard side, same reasoning as riskState."
+          "enum": ["FALL_SUSPECTED", "SOS_BUTTON", "INACTIVITY", "HEAT_STRESS", "TOXIC_GAS", "COMBUSTIBLE_GAS", "HIGH_HEART_RATE", "LOW_HEART_RATE", "LOW_SPO2", "WATER_INGRESS"],
+          "description": "Keep this an open string on the dashboard side, same reasoning as riskState — new hazard types can be added without a dashboard code change."
         },
         "riskState": {
           "type": "string",
-          "description": "Mirrors the worker's local state at the moment of trigger, currently always 'FALL_SUSPECTED' for this msgType."
+          "description": "Mirrors the worker's local state at the moment of trigger — one of SOS, INACTIVITY, HEAT_STRESS, GAS_DANGER, HIGH_HEART_RATE, LOW_HEART_RATE, LOW_SPO2, WATER_INGRESS, or FALL_SUSPECTED, matching hazardType above (GAS_DANGER covers both TOXIC_GAS and COMBUSTIBLE_GAS hazardTypes)."
         },
         "secondsInactive": {
           "type": "number",
-          "description": "How long the inactivity timer had run when it crossed INACTIVITY_DURATION_SEC."
+          "description": "How long the inactivity timer had run when it crossed INACTIVITY_DURATION_SEC. Only meaningful for FALL_SUSPECTED/INACTIVITY hazardTypes; still sent (as elapsed time since last motion) for every other hazard type, since the field is always present in the wire packet."
         },
         "motionEnergyAtTrigger": {
           "type": "number",

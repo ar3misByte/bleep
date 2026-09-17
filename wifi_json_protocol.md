@@ -1,6 +1,6 @@
-# Sensora — Wall Node → Dashboard WiFi/JSON Protocol (Feature 1)
+# Bleep — Wall Node → Dashboard WiFi/JSON Protocol
 
-**Scope:** this covers only what Feature 1 (fall/inactivity detection) needs — the wall node's ESP-NOW link to the worker is unchanged from the build checklist; this document is specifically the **wall node → dashboard** hop, now over WiFi instead of USB serial. The formal schema is `sensora_telemetry.schema.json` (same folder) — treat it as the source of truth; this doc explains how to use it.
+**Scope:** the wall node's ESP-NOW link to the worker is unchanged from the build checklist; this document is specifically the **wall node → dashboard** hop, now over WiFi instead of USB serial. It covers fall/inactivity detection plus the environmental and vitals hazard sensing added on top (DHT11, BMP180, MQ-135, MQ-4, MAX30102, soil moisture). The formal schema is `sensora_telemetry.schema.json` (same folder) — treat it as the source of truth; this doc explains how to use it.
 
 ---
 
@@ -35,12 +35,20 @@ Every message has the same envelope; `payload` differs by `msgType`. Full field-
     "riskState": "OK",
     "motionEnergy": 14.2,
     "secondsSinceMotion": 2,
-    "battery": null
+    "battery": null,
+    "temperatureC": 27.4,
+    "humidityPct": 58,
+    "pressureHPa": 1008,
+    "airQualityRaw": 612,
+    "combustibleGasRaw": 340,
+    "heartRateBpm": 78,
+    "spo2Pct": 97,
+    "soilMoisturePct": 12
   }
 }
 ```
 
-**DISTRESS** (required — this is what the build checklist's Feature 1 already triggers; matches `{workerId, msgType=DISTRESS, timestamp}` from that plan, just fleshed out into the full envelope):
+**DISTRESS** (required — sent immediately on any hazard trigger, not on the next scheduled tick; `hazardType`/`riskState` name which one fired — see `sensora_telemetry.schema.json` for the full enum):
 ```json
 {
   "schemaVersion": 1,
@@ -55,10 +63,22 @@ Every message has the same envelope; `payload` differs by `msgType`. Full field-
     "riskState": "FALL_SUSPECTED",
     "secondsInactive": 32.4,
     "motionEnergyAtTrigger": 0.3,
-    "battery": null
+    "battery": null,
+    "temperatureC": 27.4,
+    "humidityPct": 58,
+    "pressureHPa": 1008,
+    "airQualityRaw": 612,
+    "combustibleGasRaw": 340,
+    "heartRateBpm": 78,
+    "spo2Pct": 97,
+    "soilMoisturePct": 12
   }
 }
 ```
+
+The same eight environmental/vitals fields ride on *every* message regardless of `hazardType` — they're a live snapshot from `worker_node.ino`'s continuous sensor loop, not something specific to the hazard that triggered a given DISTRESS. A worker in `FALL_SUSPECTED` still reports their gas/temperature/vitals readings at the moment of the fall, for instance.
+
+Other `hazardType`/`riskState` values now in use: `SOS_BUTTON` / `SOS`, `INACTIVITY`, `HEAT_STRESS`, `TOXIC_GAS` / `GAS_DANGER`, `COMBUSTIBLE_GAS` / `GAS_DANGER`, `HIGH_HEART_RATE`, `LOW_HEART_RATE`, `LOW_SPO2`, `WATER_INGRESS`.
 
 **Why `battery: null` instead of leaving the field out:** the dashboard code you write today should not need to change when battery monitoring gets added later — it should already know to expect a `battery` key and just render "—" for null. Same reasoning for `riskState` being treated as an open string rather than a hardcoded switch/enum on the dashboard side: you will add `WARNING`, `CRITICAL`, `SOS`, `OFFLINE` etc. as later features land, and the dashboard shouldn't need a code change every time.
 
@@ -134,6 +154,8 @@ void sendStatus(const char* workerId, uint32_t seq, int rssi,
 ```
 
 Note the asymmetry: DISTRESS gets retries because losing it matters; STATUS doesn't, because the next one is seconds away. Don't apply the same retry logic to both — retrying every STATUS send on a flaky WiFi link will stall your main loop.
+
+**This is the illustrative router-based path.** The actual, currently-flashed implementation is the peer-to-peer one in `firmware/worker_node.ino` (ESP-NOW sender, builds the same fields into a packed `WorkerPacket` struct instead of a JSON doc) and `firmware/wall_node.ino` (receives it, and serves the same field names as JSON itself — no separate relay server needed). Treat the JSON shape here as the contract; the wire format on the ESP-NOW hop is a binary mirror of it.
 
 ---
 

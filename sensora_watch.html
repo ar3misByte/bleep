@@ -1,0 +1,1686 @@
+<title>Sensora Watch</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:        #f7f7f4;
+    --surface:     #ffffff;
+    --surface-2:   #fbfbf9;
+    --border:      rgba(15, 23, 32, 0.09);
+    --border-strong: rgba(15, 23, 32, 0.16);
+    --ink:         #10181f;
+    --ink-2:       #52606d;
+    --ink-muted:   #8b93a0;
+    --accent:      #2a5f8a;
+    --accent-soft: #eaf1f6;
+    --accent-ink:  #ffffff;
+    --navy:        #101c2b;
+    --navy-2:      #17273b;
+
+    --good:      #0ca30c;
+    --good-bg:   #eaf7ea;
+    --warning:   #b45309;
+    --warning-bg:#fbf1e0;
+    --critical:  #d03b3b;
+    --critical-bg: #fbeaea;
+    --offline:   #8b93a0;
+    --offline-bg: #eef0f2;
+
+    --font-head:  "Public Sans", "Segoe UI", system-ui, sans-serif;
+    --font-body:  "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono:  "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+    --font-alert: "Atkinson Hyperlegible", "Inter", system-ui, sans-serif;
+
+    --radius: 10px;
+    --shadow-card: 0 1px 2px rgba(16,24,32,0.04), 0 1px 12px rgba(16,24,32,0.04);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  h1, h2, h3 { font-family: var(--font-head); margin: 0; text-wrap: balance; }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  button { font: inherit; }
+  input, select, textarea { font: inherit; color: inherit; }
+
+  /* ---------- utility bar ---------- */
+  .utility-bar {
+    background: var(--navy);
+    color: rgba(255,255,255,0.82);
+    padding: 7px clamp(16px, 3vw, 32px);
+    padding-top: calc(7px + env(safe-area-inset-top, 0px));
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .utility-bar strong { color: #fff; font-weight: 700; }
+  .utility-right { display: flex; align-items: center; gap: 14px; }
+  .demo-flag {
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    letter-spacing: 0.04em;
+    border: none;
+    cursor: pointer;
+  }
+  .demo-flag.live { background: rgba(12,163,12,0.35); }
+
+  /* ---------- header ---------- */
+  .page-header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 18px clamp(16px, 3vw, 32px) 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .page-header h1 { font-size: 22px; font-weight: 700; color: var(--navy); }
+  .header-meta { text-align: right; font-size: 12px; color: var(--ink-2); padding-bottom: 14px; }
+  .header-meta .mono { color: var(--ink); font-size: 13px; }
+
+  /* ---------- tab nav ---------- */
+  .tabs {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 clamp(16px, 3vw, 32px);
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 20;
+  }
+  .tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 2.5px solid transparent;
+    color: var(--ink-muted);
+    font-family: var(--font-head);
+    font-weight: 700;
+    font-size: 12.5px;
+    letter-spacing: 0.02em;
+    padding: 13px 12px 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tab-btn:hover { color: var(--ink); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-badge {
+    background: var(--critical);
+    color: #fff;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+  }
+
+  /* ---------- layout ---------- */
+  main {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: clamp(16px, 3vw, 28px) clamp(16px, 3vw, 32px) 64px;
+  }
+  .view { display: flex; flex-direction: column; gap: 20px; }
+  .view[hidden] { display: none !important; }
+
+  .view-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+  .view-head h2 { font-size: 19px; font-weight: 700; color: var(--navy); }
+  .view-head p { margin: 4px 0 0; font-size: 12.5px; color: var(--ink-muted); max-width: 60ch; }
+
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+  .stat-tile {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .stat-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-muted); }
+  .stat-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 26px; font-weight: 700; color: var(--navy); line-height: 1.1; }
+  .stat-value.good { color: var(--good); }
+  .stat-value.warning { color: var(--warning); }
+  .stat-value.critical { color: var(--critical); }
+  .stat-sub { font-size: 12px; color: var(--ink-2); }
+
+  /* ---------- alert banner ---------- */
+  .alert-banner {
+    background: var(--critical-bg);
+    border: 1px solid #f0c6c6;
+    border-left: 5px solid var(--critical);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-family: var(--font-alert);
+  }
+  .alert-banner[hidden] { display: none !important; }
+  .alert-icon {
+    width: 40px; height: 40px; flex: 0 0 auto;
+    border-radius: 50%;
+    background: var(--critical);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+  }
+  .alert-body { flex: 1; min-width: 220px; }
+  .alert-title { font-size: 16px; font-weight: 700; color: #7a1f1f; }
+  .alert-detail { font-size: 13.5px; color: #7a1f1f; margin-top: 2px; }
+  .alert-detail .mono { color: #7a1f1f; }
+  .ghost-btn, .ack-btn, .primary-btn, .danger-btn {
+    font-family: var(--font-body);
+    font-weight: 600;
+    font-size: 12.5px;
+    border-radius: 8px;
+    padding: 9px 15px;
+    cursor: pointer;
+    border: 1px solid var(--border-strong);
+    background: #fff;
+    color: var(--ink);
+    flex: 0 0 auto;
+  }
+  .ghost-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .primary-btn { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .primary-btn:hover { background: #234c70; }
+  .danger-btn { background: var(--critical); border-color: var(--critical); color: #fff; }
+  .danger-btn:hover { background: #b32f2f; }
+  .ack-btn { background: var(--critical); border-color: var(--critical); color: #fff; }
+  .ack-btn:hover { background: #b32f2f; }
+  button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  button[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+  /* ---------- panels ---------- */
+  .split { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; align-items: start; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-card); overflow: hidden; }
+  .panel-head { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .panel-head h2 { font-size: 14.5px; font-weight: 700; color: var(--navy); }
+  .panel-head .count { font-family: var(--font-mono); color: var(--ink-muted); font-size: 12.5px; }
+  .panel-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+  .panel-body.tight { padding: 0; gap: 0; }
+  .empty-note { font-size: 12.5px; color: var(--ink-muted); padding: 6px 2px; }
+
+  /* worker card */
+  .worker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .worker-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; display: grid; grid-template-columns: auto 1fr auto; gap: 10px 16px; align-items: center; background: var(--surface); }
+  .worker-id { font-family: var(--font-mono); font-weight: 700; font-size: 15px; color: var(--navy); }
+  .worker-name { font-size: 12.5px; color: var(--ink); font-weight: 600; }
+  .worker-sub { font-size: 11.5px; color: var(--ink-muted); margin-top: 2px; }
+
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.02em; padding: 5px 10px; border-radius: 999px; white-space: nowrap; }
+  .status-pill.good { background: var(--good-bg); color: #0a7a0a; }
+  .status-pill.warning { background: var(--warning-bg); color: #93450a; }
+  .status-pill.critical { background: var(--critical-bg); color: #a52929; }
+  .status-pill.offline { background: var(--offline-bg); color: #5c636d; }
+  .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+  .worker-metrics { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding-top: 10px; border-top: 1px dashed var(--border); }
+  .metric-label { font-size: 10.5px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .metric-value { font-family: var(--font-mono); font-size: 14px; font-weight: 600; color: var(--ink); margin-top: 2px; }
+  .metric-value.critical { color: var(--critical); }
+  .metric-value.warning { color: var(--warning); }
+
+  .risk-track { grid-column: 1 / -1; }
+  .risk-label { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--ink-muted); margin-bottom: 4px; }
+  .bar-track { height: 6px; background: #eef1f3; border-radius: 999px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; transition: width 0.4s ease, background-color .4s ease; }
+
+  .card-actions { grid-column: 1 / -1; display: flex; gap: 8px; padding-top: 6px; }
+  .icon-btn { border: 1px solid var(--border-strong); background: #fff; border-radius: 6px; padding: 5px 9px; font-size: 11.5px; cursor: pointer; color: var(--ink-2); }
+  .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .icon-btn.remove:hover { border-color: var(--critical); color: var(--critical); }
+
+  /* event log */
+  .log-list { display: flex; flex-direction: column; gap: 0; max-height: 420px; overflow-y: auto; }
+  .log-row { display: grid; grid-template-columns: auto auto 1fr; gap: 10px; padding: 9px 18px; border-bottom: 1px solid var(--border); font-size: 12.5px; align-items: baseline; }
+  .log-row:last-child { border-bottom: none; }
+  .log-time { font-family: var(--font-mono); color: var(--ink-muted); font-size: 11.5px; white-space: nowrap; }
+  .log-tag { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 6px; border-radius: 4px; white-space: nowrap; height: fit-content; }
+  .log-tag.STATUS { background: #eef0f2; color: #5c636d; }
+  .log-tag.DISTRESS { background: var(--critical-bg); color: #a52929; }
+  .log-text { color: var(--ink-2); }
+  .log-text strong { color: var(--ink); font-family: var(--font-mono); }
+
+  /* alerts table */
+  .alert-list { display: flex; flex-direction: column; }
+  .alert-row { display: grid; grid-template-columns: auto 1fr auto auto; gap: 14px; align-items: center; padding: 13px 18px; border-bottom: 1px solid var(--border); }
+  .alert-row:last-child { border-bottom: none; }
+  .sev-stripe { width: 6px; align-self: stretch; border-radius: 3px; background: var(--ink-muted); }
+  .sev-stripe.critical { background: var(--critical); }
+  .sev-stripe.warning { background: var(--warning); }
+  .alert-main .alert-row-title { font-weight: 700; font-size: 13px; color: var(--ink); }
+  .alert-main .alert-row-desc { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+  .alert-row-time { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-muted); white-space: nowrap; }
+  .filter-row { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 18px 14px; }
+  .chip-filter { border: 1px solid var(--border-strong); background: #fff; border-radius: 999px; padding: 6px 12px; font-size: 11.5px; font-weight: 600; cursor: pointer; color: var(--ink-2); }
+  .chip-filter.active { background: var(--navy); border-color: var(--navy); color: #fff; }
+
+  /* forms */
+  .form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 16px; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label { font-size: 11px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+  .field input, .field select { border: 1px solid var(--border-strong); border-radius: 7px; padding: 9px 10px; background: var(--surface-2); font-size: 13.5px; }
+  .field input:focus, .field select:focus { outline: none; border-color: var(--accent); background: #fff; }
+  .field-hint { font-size: 11px; color: var(--ink-muted); }
+  .form-actions { display: flex; gap: 10px; justify-content: flex-end; padding-top: 4px; }
+  .toast { font-size: 12px; padding: 8px 12px; border-radius: 7px; background: var(--good-bg); color: #0a7a0a; display: none; }
+  .toast.show { display: block; }
+  .toast.err { background: var(--critical-bg); color: #a52929; }
+
+  /* gauges */
+  .gauge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+  .gauge-card { border: 1px solid var(--border); border-radius: 8px; padding: 13px 15px; background: var(--surface); }
+  .gauge-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .gauge-name { font-size: 11.5px; font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+  .gauge-reading { font-family: var(--font-mono); font-size: 18px; font-weight: 700; color: var(--navy); }
+  .gauge-band { position: relative; height: 8px; background: linear-gradient(to right, var(--good) 0 60%, var(--warning) 60% 85%, var(--critical) 85% 100%); border-radius: 999px; opacity: 0.35; }
+  .gauge-marker { position: absolute; top: -3px; width: 3px; height: 14px; background: var(--navy); border-radius: 2px; transform: translateX(-50%); }
+  .gauge-range { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-muted); margin-top: 5px; font-family: var(--font-mono); }
+  canvas.spark { width: 100%; height: 36px; display: block; margin-top: 8px; }
+
+  /* mine map */
+  .map-wrap { position: relative; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: #0d1720; }
+  .map-wrap svg { display: block; width: 100%; height: auto; }
+  .map-legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 12px 18px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--ink-2); }
+  .legend-dot { display: inline-flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .map-tooltip { position: absolute; background: var(--navy); color: #fff; font-size: 11.5px; padding: 8px 10px; border-radius: 7px; pointer-events: none; max-width: 200px; box-shadow: 0 4px 14px rgba(0,0,0,0.3); transform: translate(-50%, -110%); z-index: 5; }
+  .map-tooltip[hidden] { display: none; }
+  .map-tooltip .mono { color: #cfe0ee; }
+
+  /* reports */
+  .report-toolbar { display: flex; gap: 10px; flex-wrap: wrap; }
+  .report-sheet { background: #fff; border: 1px solid var(--border); border-radius: var(--radius); padding: 28px clamp(18px, 4vw, 40px); font-family: var(--font-body); }
+  .report-sheet h3 { font-family: var(--font-head); font-size: 17px; color: var(--navy); margin-top: 22px; margin-bottom: 10px; }
+  .report-sheet h3:first-child { margin-top: 0; }
+  .report-meta { font-size: 12px; color: var(--ink-muted); margin-bottom: 4px; }
+  .report-title { font-family: var(--font-head); font-size: 22px; font-weight: 800; color: var(--navy); }
+  table.data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.data-table th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted); padding: 7px 10px; border-bottom: 1px solid var(--border-strong); }
+  table.data-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); font-family: var(--font-mono); }
+  .table-scroll { overflow-x: auto; }
+  .copy-box { display: none; }
+
+  /* admin */
+  .settings-section { display: flex; flex-direction: column; gap: 12px; }
+  .settings-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .settings-row:last-child { border-bottom: none; }
+  .settings-row-label { font-size: 13px; font-weight: 600; color: var(--ink); }
+  .settings-row-desc { font-size: 11.5px; color: var(--ink-muted); margin-top: 2px; max-width: 46ch; }
+  .switch { position: relative; width: 42px; height: 24px; flex: 0 0 auto; }
+  .switch input { opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; position: absolute; z-index: 1; }
+  .switch-track { position: absolute; inset: 0; background: var(--offline); border-radius: 999px; transition: background .2s; }
+  .switch-thumb { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; background: #fff; border-radius: 50%; transition: left .2s; }
+  .switch input:checked ~ .switch-track { background: var(--good); }
+  .switch input:checked ~ .switch-thumb { left: 21px; }
+  .num-input { width: 90px; border: 1px solid var(--border-strong); border-radius: 7px; padding: 7px 9px; background: var(--surface-2); text-align: right; }
+
+  @media (max-width: 820px) {
+    .stat-row { grid-template-columns: repeat(2, 1fr); }
+    .split { grid-template-columns: 1fr; }
+    .worker-metrics { grid-template-columns: repeat(2, 1fr); }
+    .form-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 460px) {
+    .worker-card { grid-template-columns: 1fr; }
+    .status-pill { justify-self: start; }
+    .alert-row { grid-template-columns: auto 1fr; }
+    .alert-row-time, .alert-row > .ghost-btn { grid-column: 2; justify-self: start; }
+  }
+
+  @media print {
+    .utility-bar, .page-header, .tabs, .view:not(#view-reports), .report-toolbar { display: none !important; }
+    body { background: #fff; }
+    main { padding: 0; max-width: none; }
+    .report-sheet { border: none; box-shadow: none; padding: 0; }
+  }
+</style>
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@600;700;800&family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600;700&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+
+<div class="utility-bar">
+  <div><strong>SENSORA</strong> &nbsp;&middot;&nbsp; Underground Worker Safety Command</div>
+  <div class="utility-right">
+    <button class="demo-flag" id="dataModeFlag" type="button" title="Toggle between simulated and live-fetch mode">SIMULATED DATA</button>
+    <span class="mono" id="clock">--:--:--</span>
+  </div>
+</div>
+
+<header class="page-header">
+  <div>
+    <h1>Command Dashboard</h1>
+  </div>
+  <div class="header-meta">
+    Wall nodes linked<br>
+    <span class="mono" id="linkStatus">2 / 2 ONLINE</span>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs" aria-label="Dashboard sections">
+  <button class="tab-btn active" data-tab="overview" type="button">Overview</button>
+  <button class="tab-btn" data-tab="workers" type="button">Workers</button>
+  <button class="tab-btn" data-tab="alerts" type="button">Alerts <span class="tab-badge" id="alertTabBadge" hidden>0</span></button>
+  <button class="tab-btn" data-tab="vitals" type="button">Vitals &amp; Gas</button>
+  <button class="tab-btn" data-tab="map" type="button">Mine Map</button>
+  <button class="tab-btn" data-tab="reports" type="button">Reports</button>
+  <button class="tab-btn" data-tab="admin" type="button">Admin</button>
+</nav>
+
+<main>
+
+  <!-- ================= OVERVIEW ================= -->
+  <section class="view" id="view-overview">
+    <section class="stat-row" aria-label="System status">
+      <div class="stat-tile">
+        <span class="stat-label">Workers Monitored</span>
+        <span class="stat-value" id="statWorkers">2</span>
+        <span class="stat-sub" id="statWorkersSub">across 2 wall nodes</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-label">Average Risk Score</span>
+        <span class="stat-value good" id="statAvgRisk">0.0</span>
+        <span class="stat-sub">out of 10 &middot; fleet-wide</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-label">Active Alerts</span>
+        <span class="stat-value good" id="statAlerts">0</span>
+        <span class="stat-sub" id="statAlertsSub">none in progress</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-label">Nodes Online</span>
+        <span class="stat-value mono" style="font-size:18px; color:var(--good);" id="statNodes">2 / 2</span>
+        <span class="stat-sub">ESP-NOW &rarr; WiFi &rarr; dashboard</span>
+      </div>
+    </section>
+
+    <div class="alert-banner" id="alertBanner" hidden>
+      <div class="alert-icon">&#9888;</div>
+      <div class="alert-body">
+        <div class="alert-title" id="alertTitle">WORKER W1 &mdash; FALL SUSPECTED</div>
+        <div class="alert-detail" id="alertDetail">&nbsp;</div>
+      </div>
+      <button class="ack-btn" id="ackBtn" type="button">Acknowledge</button>
+    </div>
+
+    <div class="split">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Worker Roster</h2>
+          <span class="count mono" id="rosterCountOverview">2 workers</span>
+        </div>
+        <div class="panel-body" id="rosterBodyOverview"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Recent Alerts</h2>
+          <span class="count mono" id="recentAlertCount">0</span>
+        </div>
+        <div class="panel-body tight">
+          <div class="alert-list" id="recentAlertList"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Mine Map &mdash; Live Snapshot</h2>
+        <span class="count mono">click a marker for detail</span>
+      </div>
+      <div class="panel-body tight">
+        <div class="map-wrap" id="miniMapWrap" style="border:none; border-radius:0;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= WORKERS ================= -->
+  <section class="view" id="view-workers" hidden>
+    <div class="view-head">
+      <div>
+        <h2>Workers</h2>
+        <p>Every registered worker's live telemetry, as reported by the wall node it's paired with over ESP-NOW.</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Register New Worker</h2></div>
+      <div class="panel-body">
+        <form id="registerForm">
+          <div class="form-grid">
+            <div class="field">
+              <label for="regId">Worker ID</label>
+              <input id="regId" name="regId" placeholder="e.g. W3" maxlength="7" required>
+              <span class="field-hint">Must match the workerId hardcoded in that worker's firmware.</span>
+            </div>
+            <div class="field">
+              <label for="regName">Full name</label>
+              <input id="regName" name="regName" placeholder="e.g. Rahul Nair" required>
+            </div>
+            <div class="field">
+              <label for="regRole">Role</label>
+              <input id="regRole" name="regRole" placeholder="e.g. Drill Operator" required>
+            </div>
+            <div class="field">
+              <label for="regNode">Assigned wall node</label>
+              <select id="regNode" name="regNode" required></select>
+            </div>
+          </div>
+          <div class="form-actions">
+            <span class="toast" id="registerToast"></span>
+            <button type="submit" class="primary-btn">Register worker</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Worker Roster</h2>
+        <span class="count mono" id="rosterCountFull">2 workers</span>
+      </div>
+      <div class="panel-body">
+        <div class="worker-grid" id="rosterBodyFull"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ALERTS ================= -->
+  <section class="view" id="view-alerts" hidden>
+    <div class="view-head">
+      <div>
+        <h2>Alerts</h2>
+        <p>Every DISTRESS event and near-threshold warning, newest first. Acknowledging removes it from the active count but keeps it in the history used by Reports.</p>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="filter-row" id="alertFilters">
+        <button class="chip-filter active" data-filter="all" type="button">All</button>
+        <button class="chip-filter" data-filter="critical" type="button">Critical</button>
+        <button class="chip-filter" data-filter="warning" type="button">Warning</button>
+        <button class="chip-filter" data-filter="active" type="button">Unacknowledged</button>
+      </div>
+      <div class="panel-body tight">
+        <div class="alert-list" id="fullAlertList"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= VITALS & GAS ================= -->
+  <section class="view" id="view-vitals" hidden>
+    <div class="view-head">
+      <div>
+        <h2>Vitals &amp; Gas Monitoring</h2>
+        <p>Live readings against the tinyML-derived safe band for each sensor (see <span class="mono">tinyml_model.h</span>). The marker on each band shows the current reading; a reading past the red zone is what latches a DISTRESS alarm on the worker's firmware.</p>
+      </div>
+    </div>
+    <div id="vitalsBody" style="display:flex; flex-direction:column; gap:18px;"></div>
+  </section>
+
+  <!-- ================= MINE MAP ================= -->
+  <section class="view" id="view-map" hidden>
+    <div class="view-head">
+      <div>
+        <h2>Mine Map</h2>
+        <p>Schematic layout of wall nodes (anchors) and the workers currently paired to each. Marker color follows risk level; position is illustrative, not surveyed GPS.</p>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-body tight">
+        <div class="map-wrap" id="fullMapWrap"></div>
+        <div class="map-legend">
+          <span class="legend-dot"><span class="legend-swatch" style="background:var(--good)"></span> Normal</span>
+          <span class="legend-dot"><span class="legend-swatch" style="background:var(--warning)"></span> Warning</span>
+          <span class="legend-dot"><span class="legend-swatch" style="background:var(--critical)"></span> Critical / Distress</span>
+          <span class="legend-dot"><span class="legend-swatch" style="background:var(--offline)"></span> Offline</span>
+          <span class="legend-dot">&#9670; Wall node (ESP32 anchor)</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= REPORTS ================= -->
+  <section class="view" id="view-reports" hidden>
+    <div class="view-head">
+      <div>
+        <h2>Reports</h2>
+        <p>Generate a point-in-time master report of the whole site: fleet risk, every worker's last reading, and the full alert history.</p>
+      </div>
+    </div>
+    <div class="report-toolbar">
+      <button class="primary-btn" id="genReportBtn" type="button">Generate master report</button>
+      <button class="ghost-btn" id="printReportBtn" type="button">Print / Save as PDF</button>
+      <button class="ghost-btn" id="copyReportBtn" type="button">Copy report text</button>
+      <span class="toast" id="reportToast"></span>
+    </div>
+    <textarea class="copy-box" id="copyBoxArea" readonly></textarea>
+    <div class="report-sheet" id="reportSheet">
+      <p class="empty-note">No report generated yet &mdash; click "Generate master report" above.</p>
+    </div>
+  </section>
+
+  <!-- ================= ADMIN ================= -->
+  <section class="view" id="view-admin" hidden>
+    <div class="view-head">
+      <div>
+        <h2>Admin Settings</h2>
+        <p>Alarm thresholds mirror the tinyML-derived constants baked into each worker's firmware (<span class="mono">tinyml_model.h</span>). Changing them here only affects this dashboard's own risk scoring and alerting &mdash; re-run <span class="mono">ml/train_tinyml_model.py</span> to change what the hardware itself alarms on.</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Data Source</h2></div>
+      <div class="panel-body settings-section">
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Simulated telemetry</div>
+            <div class="settings-row-desc">When on, the dashboard generates realistic STATUS packets on a timer, exactly like real hardware would. Turn off once wall nodes are reachable and wire up a real fetch.</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="simToggle" checked><span class="switch-track"></span><span class="switch-thumb"></span></label>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Ambient tick interval</div>
+            <div class="settings-row-desc">How often simulated workers report a routine STATUS packet.</div>
+          </div>
+          <div><input class="num-input" type="number" id="tickInterval" min="1" max="30" value="3"> s</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Live Hardware (wall_n.ino)</h2></div>
+      <div class="panel-body settings-section">
+        <div class="alert-banner" style="background:var(--warning-bg); border-color:#e8d3a3; border-left-color:var(--warning); padding:12px 16px;">
+          <div class="alert-body" style="font-family:var(--font-body);">
+            <div style="font-weight:700; font-size:12.5px; color:#7a4a06;">This only works from a locally-saved copy of this page.</div>
+            <div style="font-size:12px; color:#7a4a06; margin-top:3px;">The hosted claude.ai link cannot reach a device on your local network &mdash; that's a platform sandbox restriction, not a bug. To go live: open this artifact's "..." menu &rarr; Download HTML, save it, then open that file in a browser while your laptop is connected to the wall node's own WiFi (its SSID/password are printed in <span class="mono">wall_n.ino</span>, default network <span class="mono">Bleep-WallNode2</span>). Opened that way, the toggle below will work.</div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Use live hardware data</div>
+            <div class="settings-row-desc">Polls <span class="mono">wall_n.ino</span>'s <span class="mono">/api/workers</span> endpoint directly and feeds it through the same <span class="mono">handleIncomingMessage()</span> path the simulator uses. Turning this on pauses simulated telemetry automatically.</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="liveToggle"><span class="switch-track"></span><span class="switch-thumb"></span></label>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Wall node address</div>
+            <div class="settings-row-desc">Printed at boot in <span class="mono">wall_n.ino</span>'s Serial log ("browse to: http://..."). Default SoftAP IP is <span class="mono">192.168.4.1</span> unless changed.</div>
+          </div>
+          <input type="text" id="liveUrl" value="http://192.168.4.1" style="width:200px; border:1px solid var(--border-strong); border-radius:7px; padding:7px 9px; background:var(--surface-2); font-family:var(--font-mono); font-size:12.5px;">
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Connection status</div>
+          <span class="mono" id="liveStatus" style="font-size:12.5px; color:var(--ink-muted);">not connected</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Alarm Thresholds</h2></div>
+      <div class="panel-body settings-section" id="thresholdSettings"></div>
+      <div class="panel-body" style="padding-top:0;">
+        <div class="form-actions">
+          <span class="toast" id="thresholdToast"></span>
+          <button class="ghost-btn" id="resetThresholdsBtn" type="button">Reset to tinyML defaults</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Wall Nodes</h2></div>
+      <div class="panel-body" id="nodeAdminBody"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Danger Zone</h2></div>
+      <div class="panel-body settings-section">
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Reset entire system</div>
+            <div class="settings-row-desc">Clears registered workers, alerts, and settings stored in this browser, and reloads the default demo state.</div>
+          </div>
+          <button class="danger-btn" id="resetSystemBtn" type="button">Reset system</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="map-tooltip" id="mapTooltip" hidden></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // =========================================================
+  // CONSTANTS -- mirrors tinyml_model.h / worker_n.ino exactly.
+  // Feature order: temperatureC, humidityPct, airQualityRaw,
+  // combustibleGasRaw, heartRateBpm, spo2Pct, soilMoisturePct, motionEnergy.
+  // =========================================================
+  var DEFAULT_THRESHOLDS = {
+    tempHigh:  34.0,   // C, TEMP_DANGER_C
+    mq135High: 1604,   // raw ADC, MQ135_DANGER_RAW
+    mq4High:   3426,   // raw ADC, MQ4_DANGER_RAW
+    hrHigh:    130,    // bpm
+    hrLow:     55,     // bpm
+    spo2Low:   91.5,   // %
+    soilHigh:  71      // %
+  };
+  var THRESHOLD_META = [
+    { key: "tempHigh",  label: "Heat stress (max temperature)", unit: "°C" },
+    { key: "mq135High", label: "Toxic gas MQ-135 (max raw)",     unit: "" },
+    { key: "mq4High",   label: "Combustible gas MQ-4 (max raw)", unit: "" },
+    { key: "hrHigh",    label: "Heart rate, high (max bpm)",     unit: "bpm" },
+    { key: "hrLow",     label: "Heart rate, low (min bpm)",      unit: "bpm" },
+    { key: "spo2Low",   label: "SpO2, low (min %)",              unit: "%" },
+    { key: "soilHigh",  label: "Water ingress / soil (max %)",   unit: "%" }
+  ];
+
+  var STALE_MS = 15000;
+  var INACTIVITY_DURATION_SEC = 30;
+
+  var LS = {
+    workers: "sensora.workers.v1",
+    nodes: "sensora.nodes.v1",
+    thresholds: "sensora.thresholds.v1",
+    tab: "sensora.tab.v1",
+    liveUrl: "sensora.liveUrl.v1"
+  };
+
+  function safeGet(key) {
+    try { var v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch (e) { return null; }
+  }
+  function safeSet(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* private mode etc -- fine to no-op */ }
+  }
+
+  // =========================================================
+  // STATE
+  // =========================================================
+  // Positions sit on the schematic tunnel paths drawn in mapSvg() --
+  // WALL2 is the one real wall node currently on hardware (see Admin
+  // > Live Hardware); the rest are dummy anchors added purely to show
+  // what a fuller multi-node mine layout looks like on the map.
+  var DEFAULT_NODES = {
+    WALL1: { id: "WALL1", label: "Wall Node 1", zone: "Main Shaft — Level 2",       x: 190, y: 250 },
+    WALL2: { id: "WALL2", label: "Wall Node 2", zone: "Tunnel B — Level 3",         x: 560, y: 380 },
+    WALL3: { id: "WALL3", label: "Wall Node 3", zone: "Tunnel C — Ventilation Shaft", x: 600, y: 70  },
+    WALL4: { id: "WALL4", label: "Wall Node 4", zone: "Tunnel A — East Face",       x: 720, y: 240 },
+    WALL5: { id: "WALL5", label: "Wall Node 5", zone: "Tunnel A — West Entrance",   x: 40,  y: 260 }
+  };
+  var DEFAULT_WORKERS = {
+    W1: { id: "W1", name: "Aditya Sharma",  role: "Drill Operator",         nodeId: "WALL1" },
+    W2: { id: "W2", name: "Priya Verma",    role: "Safety Inspector",      nodeId: "WALL2" },
+    W3: { id: "W3", name: "Rohan Mehta",    role: "Ventilation Technician", nodeId: "WALL3" },
+    W4: { id: "W4", name: "Sana Iqbal",     role: "Haulage Operator",       nodeId: "WALL4" }
+    // WALL5 deliberately has no worker assigned yet -- a wall node
+    // with zero paired workers is a realistic state too, not a bug.
+  };
+
+  // Merge defaults UNDER whatever is already saved, so a returning
+  // browser picks up newly-added dummy nodes/workers (like WALL3-5
+  // above) without losing anything already registered or renamed.
+  var nodes = Object.assign({}, DEFAULT_NODES, safeGet(LS.nodes) || {});
+  var registry = Object.assign({}, DEFAULT_WORKERS, safeGet(LS.workers) || {});
+  var thresholds = Object.assign({}, DEFAULT_THRESHOLDS, safeGet(LS.thresholds) || {});
+
+  var telemetry = {};      // workerId -> latest message
+  var history = {};        // workerId -> array of last N riskScores, for sparklines
+  var eventLog = [];        // newest first
+  var alerts = [];          // {id, level, title, desc, time, ts, workerId, zone, ack, kind}
+  var seqCounters = {};
+  var alertedWorker = null;
+  var simulating = true;
+  var tickMs = 3000;
+  var tickHandle = null;
+  var alertIdCounter = 1;
+  var activeTab = safeGet(LS.tab) || "overview";
+  var alertFilter = "all";
+  var lastReportText = "";
+
+  // Live hardware fetch state -- see the "Live Hardware" panel in
+  // Admin. Only works when this page is opened from a local file (or
+  // any origin other than the hosted claude.ai link), because the
+  // artifact sandbox blocks outbound fetch() to arbitrary hosts.
+  var liveEnabled = false; // always boots off -- don't silently reconnect to a network the page has no way to confirm it's on
+  var liveUrl = safeGet(LS.liveUrl) || "http://192.168.4.1";
+  var liveHandle = null;
+  var liveSeqSeen = {}; // workerId -> last seq processed, so a repeated poll of the same latched DISTRESS doesn't spam duplicate alerts
+  var liveWorkerIds = {}; // workerId -> true for whichever workers wall_n.ino is actually reporting right now -- lets the simulator keep animating every OTHER (dummy) worker instead of freezing the whole roster while hardware is live
+
+  function nextSeq(id) { seqCounters[id] = (seqCounters[id] || 0) + 1; return seqCounters[id]; }
+  function uid() { return "al" + (alertIdCounter++); }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function relTime(ms) {
+    var s = Math.round((Date.now() - ms) / 1000);
+    if (s < 5) return "just now";
+    if (s < 60) return s + "s ago";
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + "m " + (s % 60) + "s ago";
+    var h = Math.floor(m / 60);
+    return h + "h " + (m % 60) + "m ago";
+  }
+  function hashOffset(str, range) {
+    var h = 0;
+    for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+    return (h % (range * 2)) - range;
+  }
+
+  // =========================================================
+  // TELEMETRY BUILDERS -- shape matches sensora_telemetry.schema.json
+  // / worker_n.ino's WorkerPacket (pressureHPa always null: no BMP180
+  // on the worker board; anomalyScore is the tinyML joint reconstruction
+  // error).
+  // =========================================================
+  function baselineFor(workerId) {
+    // Deterministic-ish per-worker baseline so different workers don't
+    // all look identical in the demo.
+    var seed = hashOffset(workerId, 100);
+    return {
+      temperatureC: 24 + (seed % 6),
+      humidityPct: 48 + (seed % 15),
+      airQualityRaw: 250 + Math.abs(seed) * 3,
+      combustibleGasRaw: 400 + Math.abs(seed) * 8,
+      heartRateBpm: 72 + (seed % 12),
+      spo2Pct: 97 - (Math.abs(seed) % 3),
+      soilMoisturePct: 8 + (Math.abs(seed) % 10),
+      motionEnergy: 8 + (Math.abs(seed) % 6)
+    };
+  }
+
+  function jitter(v, pct) { return v + (Math.random() - 0.5) * v * (pct || 0.06); }
+
+  function buildStatus(workerId) {
+    var b = baselineFor(workerId);
+    var reg = registry[workerId] || { nodeId: "WALL1" };
+    return {
+      schemaVersion: 1,
+      msgType: "STATUS",
+      workerId: workerId,
+      nodeId: reg.nodeId,
+      seq: nextSeq(workerId),
+      espnowRssi: -54 - Math.round(Math.random() * 20),
+      timestamp: Date.now(),
+      payload: {
+        riskState: "OK",
+        hazardType: "",
+        motionEnergy: clamp(jitter(b.motionEnergy), 0, 40),
+        secondsSinceMotion: Math.random() * 3,
+        motionEnergyAtTrigger: 0,
+        temperatureC: clamp(jitter(b.temperatureC, 0.03), 15, 45),
+        humidityPct: clamp(jitter(b.humidityPct, 0.05), 10, 95),
+        pressureHPa: null,
+        airQualityRaw: clamp(jitter(b.airQualityRaw, 0.08), 50, 4095),
+        combustibleGasRaw: clamp(jitter(b.combustibleGasRaw, 0.08), 50, 4095),
+        heartRateBpm: clamp(Math.round(jitter(b.heartRateBpm, 0.04)), 40, 180),
+        spo2Pct: clamp(jitter(b.spo2Pct, 0.01), 70, 100),
+        soilMoisturePct: clamp(jitter(b.soilMoisturePct, 0.15), 0, 100),
+        anomalyScore: clamp(Math.abs(jitter(0.008, 4)), 0, 0.05),
+        battery: null
+      }
+    };
+  }
+
+  function buildDistress(workerId, hazardType, riskState, overrides) {
+    var base = buildStatus(workerId);
+    base.msgType = "DISTRESS";
+    base.payload.hazardType = hazardType;
+    base.payload.riskState = riskState;
+    base.payload.secondsInactive = 30 + Math.random() * 8;
+    base.payload.motionEnergyAtTrigger = 0.2 + Math.random() * 0.3;
+    Object.assign(base.payload, overrides || {});
+    return base;
+  }
+
+  // =========================================================
+  // RISK SCORING -- 0-10, a demo-facing indicator (not the firmware's
+  // own latched pass/fail alarm logic). Weighted proportional excess
+  // over each threshold, plus an inactivity and anomaly-score term.
+  // =========================================================
+  function frac(value, dangerAt, highIsBad) {
+    if (value == null || isNaN(value)) return 0;
+    if (highIsBad) return clamp(value / dangerAt, 0, 1.4) / 1.4;
+    return clamp((dangerAt - value) / dangerAt, 0, 1.4) / 1.4;
+  }
+
+  function calcRisk(payload) {
+    if (!payload) return 0;
+    var heat = frac(payload.temperatureC, thresholds.tempHigh, true);
+    var gas = Math.max(frac(payload.airQualityRaw, thresholds.mq135High, true), frac(payload.combustibleGasRaw, thresholds.mq4High, true));
+    var hr = Math.max(frac(payload.heartRateBpm, thresholds.hrHigh, true), frac(payload.heartRateBpm, thresholds.hrLow, false));
+    var spo2 = frac(payload.spo2Pct, thresholds.spo2Low, false);
+    var soil = frac(payload.soilMoisturePct, thresholds.soilHigh, true);
+    var inactivity = clamp((payload.secondsSinceMotion || payload.secondsInactive || 0) / INACTIVITY_DURATION_SEC, 0, 1);
+    var anomaly = clamp((payload.anomalyScore || 0) / 0.0355, 0, 1);
+    var score = 3.0 * heat + 3.0 * gas + 1.8 * Math.max(hr, spo2) + 1.2 * soil + 1.5 * inactivity + 1.5 * anomaly;
+    if (payload.riskState && payload.riskState !== "OK") score = Math.max(score, 8.5);
+    return clamp(score, 0, 10);
+  }
+
+  function riskLevel(score) {
+    if (score >= 6.5) return "critical";
+    if (score >= 3.2) return "warning";
+    return "good";
+  }
+
+  function statusMeta(msg) {
+    if (!msg) return { cls: "offline", label: "NO DATA" };
+    var staleMs = Date.now() - msg._receivedAt;
+    if (staleMs > STALE_MS) return { cls: "offline", label: "OFFLINE" };
+    if (msg.msgType === "DISTRESS") return { cls: "critical", label: (msg.payload.riskState || "ALERT").replace(/_/g, " ") };
+    var score = calcRisk(msg.payload);
+    var lvl = riskLevel(score);
+    if (lvl === "critical") return { cls: "critical", label: "AT RISK" };
+    if (lvl === "warning") return { cls: "warning", label: "WATCH" };
+    return { cls: "good", label: "OK" };
+  }
+
+  // =========================================================
+  // ALERTS
+  // =========================================================
+  function pushAlert(level, title, desc, workerId, kind) {
+    var zone = (registry[workerId] && nodes[registry[workerId].nodeId]) ? nodes[registry[workerId].nodeId].zone : "";
+    alerts.unshift({ id: uid(), level: level, title: title, desc: desc, ts: Date.now(), workerId: workerId, zone: zone, ack: false, kind: kind || "auto" });
+    if (alerts.length > 300) alerts.pop();
+  }
+
+  function ackAlert(id) {
+    var a = alerts.filter(function (x) { return x.id === id; })[0];
+    if (a) a.ack = true;
+    render();
+  }
+
+  // =========================================================
+  // INGEST -- the single entry point real telemetry would also call.
+  // =========================================================
+  var lastWarnAt = {};
+  function handleIncomingMessage(msg) {
+    msg._receivedAt = Date.now();
+    telemetry[msg.workerId] = msg;
+    eventLog.unshift(msg);
+    if (eventLog.length > 150) eventLog.pop();
+
+    var score = calcRisk(msg.payload);
+    history[msg.workerId] = history[msg.workerId] || [];
+    history[msg.workerId].push(score);
+    if (history[msg.workerId].length > 40) history[msg.workerId].shift();
+
+    if (msg.msgType === "DISTRESS") {
+      alertedWorker = msg.workerId;
+      pushAlert("critical",
+        "Worker " + msg.workerId + " — " + (msg.payload.hazardType || msg.payload.riskState || "DISTRESS").replace(/_/g, " "),
+        buildAlertDesc(msg), msg.workerId, "distress");
+    } else {
+      var lvl = riskLevel(score);
+      if (lvl === "warning") {
+        var now = Date.now();
+        if (!lastWarnAt[msg.workerId] || now - lastWarnAt[msg.workerId] > 60000) {
+          lastWarnAt[msg.workerId] = now;
+          pushAlert("warning", "Worker " + msg.workerId + " — reading trending toward threshold",
+            buildAlertDesc(msg), msg.workerId, "warning");
+        }
+      }
+    }
+    render();
+  }
+
+  function buildAlertDesc(msg) {
+    var p = msg.payload;
+    var bits = [];
+    if (p.temperatureC >= thresholds.tempHigh * 0.85) bits.push("temp " + p.temperatureC.toFixed(1) + "°C");
+    if (p.airQualityRaw >= thresholds.mq135High * 0.85) bits.push("MQ135 " + p.airQualityRaw.toFixed(0));
+    if (p.combustibleGasRaw >= thresholds.mq4High * 0.85) bits.push("MQ4 " + p.combustibleGasRaw.toFixed(0));
+    if (p.heartRateBpm >= thresholds.hrHigh * 0.9 || p.heartRateBpm <= thresholds.hrLow * 1.1) bits.push("HR " + p.heartRateBpm.toFixed(0) + "bpm");
+    if (p.spo2Pct <= thresholds.spo2Low * 1.03) bits.push("SpO2 " + p.spo2Pct.toFixed(0) + "%");
+    if (p.soilMoisturePct >= thresholds.soilHigh * 0.85) bits.push("soil " + p.soilMoisturePct.toFixed(0) + "%");
+    if (p.secondsInactive) bits.push(p.secondsInactive.toFixed(0) + "s inactive");
+    return bits.length ? bits.join(" · ") : "risk score " + calcRisk(p).toFixed(1) + "/10";
+  }
+
+  // =========================================================
+  // TAB SWITCHING
+  // =========================================================
+  var TAB_IDS = ["overview", "workers", "alerts", "vitals", "map", "reports", "admin"];
+  function switchTab(tab) {
+    activeTab = tab;
+    safeSet(LS.tab, tab);
+    TAB_IDS.forEach(function (t) {
+      document.getElementById("view-" + t).hidden = (t !== tab);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll(".tab-btn"), function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-tab") === tab);
+    });
+    if (tab === "map" || tab === "overview") drawMaps();
+    if (tab === "vitals") renderVitals();
+    if (tab === "admin") renderAdmin();
+  }
+  document.getElementById("tabs").addEventListener("click", function (e) {
+    var btn = e.target.closest(".tab-btn");
+    if (btn) switchTab(btn.getAttribute("data-tab"));
+  });
+
+  // =========================================================
+  // RENDER -- OVERVIEW + shared worker card builder
+  // =========================================================
+  function workerCardHtml(id, opts) {
+    opts = opts || {};
+    var reg = registry[id] || { name: "Unknown", role: "—", nodeId: "?" };
+    var msg = telemetry[id];
+    var meta = statusMeta(msg);
+    var p = msg ? msg.payload : null;
+    var score = p ? calcRisk(p) : 0;
+    var lvl = riskLevel(score);
+    var node = nodes[reg.nodeId];
+
+    var removeBtn = opts.removable
+      ? '<button class="icon-btn remove" data-remove="' + id + '" type="button">Remove</button>'
+      : "";
+
+    return (
+      '<div class="worker-card">' +
+        '<div><div class="worker-id">' + id + '</div><div class="worker-name">' + reg.name + '</div>' +
+        '<div class="worker-sub">' + reg.role + ' &middot; ' + (node ? node.label : reg.nodeId) + '</div></div>' +
+        '<div class="status-pill ' + meta.cls + '"><span class="dot"></span>' + meta.label + '</div>' +
+        '<div class="mono" style="font-size:11px;color:var(--ink-muted);text-align:right;">' + (msg ? relTime(msg._receivedAt) : "never") + '</div>' +
+        '<div class="worker-metrics">' +
+          '<div><div class="metric-label">Risk score</div><div class="metric-value ' + (lvl === "good" ? "" : lvl) + '">' + score.toFixed(1) + ' / 10</div></div>' +
+          '<div><div class="metric-label">Motion energy</div><div class="metric-value">' + (p ? p.motionEnergy.toFixed(1) : "—") + '</div></div>' +
+          '<div><div class="metric-label">Temp / Humidity</div><div class="metric-value">' + (p ? p.temperatureC.toFixed(1) + '°C / ' + p.humidityPct.toFixed(0) + '%' : "—") + '</div></div>' +
+          '<div><div class="metric-label">HR / SpO2</div><div class="metric-value">' + (p ? p.heartRateBpm.toFixed(0) + 'bpm / ' + p.spo2Pct.toFixed(0) + '%' : "—") + '</div></div>' +
+        '</div>' +
+        '<div class="risk-track">' +
+          '<div class="risk-label"><span>Risk</span><span class="mono">' + score.toFixed(1) + ' / 10</span></div>' +
+          '<div class="bar-track"><div class="bar-fill" style="width:' + (score * 10) + '%; background:' + (lvl === "critical" ? "var(--critical)" : lvl === "warning" ? "var(--warning)" : "var(--good)") + ';"></div></div>' +
+        '</div>' +
+        (removeBtn ? '<div class="card-actions">' + removeBtn + '</div>' : "") +
+      '</div>'
+    );
+  }
+
+  function render() {
+    var ids = Object.keys(registry);
+    var totalRisk = 0;
+    var criticalCount = 0, warningCount = 0;
+    ids.forEach(function (id) {
+      var msg = telemetry[id];
+      var score = msg ? calcRisk(msg.payload) : 0;
+      totalRisk += score;
+      var lvl = msg ? riskLevel(score) : "offline";
+      if (msg && msg.msgType === "DISTRESS") criticalCount++;
+      else if (lvl === "critical") criticalCount++;
+      else if (lvl === "warning") warningCount++;
+    });
+    var avgRisk = ids.length ? totalRisk / ids.length : 0;
+
+    document.getElementById("statWorkers").textContent = ids.length;
+    document.getElementById("statWorkersSub").textContent = "across " + Object.keys(nodes).length + " wall nodes";
+
+    var avgEl = document.getElementById("statAvgRisk");
+    avgEl.textContent = avgRisk.toFixed(1);
+    avgEl.className = "stat-value " + riskLevel(avgRisk);
+
+    var activeAlerts = alerts.filter(function (a) { return !a.ack; });
+    var critAlerts = activeAlerts.filter(function (a) { return a.level === "critical"; });
+    var alertsEl = document.getElementById("statAlerts");
+    alertsEl.textContent = activeAlerts.length;
+    alertsEl.className = "stat-value " + (critAlerts.length ? "critical" : activeAlerts.length ? "warning" : "good");
+    document.getElementById("statAlertsSub").textContent = activeAlerts.length ? activeAlerts.length + " needing review" : "none in progress";
+
+    var badge = document.getElementById("alertTabBadge");
+    if (activeAlerts.length) { badge.hidden = false; badge.textContent = activeAlerts.length; } else badge.hidden = true;
+
+    var nodeIds = Object.keys(nodes);
+    var onlineNodes = nodeIds.filter(function (nid) {
+      return ids.some(function (id) { return registry[id].nodeId === nid && telemetry[id] && (Date.now() - telemetry[id]._receivedAt) < STALE_MS; });
+    });
+    document.getElementById("statNodes").textContent = onlineNodes.length + " / " + nodeIds.length;
+    document.getElementById("linkStatus").textContent = onlineNodes.length + " / " + nodeIds.length + " ONLINE";
+
+    // alert banner: most recent unacknowledged critical
+    var banner = document.getElementById("alertBanner");
+    var bannerAlert = critAlerts[0];
+    if (bannerAlert) {
+      document.getElementById("alertTitle").textContent = bannerAlert.title.toUpperCase();
+      document.getElementById("alertDetail").innerHTML = '<span class="mono">' + bannerAlert.desc + '</span> &middot; ' + relTime(bannerAlert.ts);
+      banner.hidden = false;
+      banner.dataset.alertId = bannerAlert.id;
+    } else {
+      banner.hidden = true;
+    }
+
+    // overview roster (first 4) + full roster
+    var overviewIds = ids.slice(0, 4);
+    document.getElementById("rosterBodyOverview").innerHTML = overviewIds.map(function (id) { return workerCardHtml(id); }).join("") || '<p class="empty-note">No workers registered yet.</p>';
+    document.getElementById("rosterCountOverview").textContent = ids.length + (ids.length === 1 ? " worker" : " workers");
+
+    document.getElementById("rosterBodyFull").innerHTML = ids.map(function (id) { return workerCardHtml(id, { removable: true }); }).join("") || '<p class="empty-note">No workers registered yet.</p>';
+    document.getElementById("rosterCountFull").textContent = ids.length + (ids.length === 1 ? " worker" : " workers");
+
+    renderAlertLists();
+    if (activeTab === "vitals") renderVitals();
+    if (activeTab === "map" || activeTab === "overview") drawMaps();
+  }
+
+  function alertRowHtml(a, showAck) {
+    return (
+      '<div class="alert-row">' +
+        '<div class="sev-stripe ' + a.level + '"></div>' +
+        '<div class="alert-main"><div class="alert-row-title">' + a.title + '</div>' +
+        '<div class="alert-row-desc">' + a.desc + (a.zone ? " &middot; " + a.zone : "") + '</div></div>' +
+        '<div class="alert-row-time mono">' + relTime(a.ts) + '</div>' +
+        (showAck ? (a.ack ? '<span class="mono" style="color:var(--ink-muted); font-size:11.5px;">acknowledged</span>' : '<button class="ghost-btn" data-ack="' + a.id + '" type="button">Acknowledge</button>') : '') +
+      '</div>'
+    );
+  }
+
+  function renderAlertLists() {
+    var recent = alerts.slice(0, 6);
+    document.getElementById("recentAlertList").innerHTML = recent.map(function (a) { return alertRowHtml(a, false); }).join("") || '<p class="empty-note" style="padding:14px 18px;">No alerts yet.</p>';
+    document.getElementById("recentAlertCount").textContent = alerts.length;
+
+    var filtered = alerts.filter(function (a) {
+      if (alertFilter === "all") return true;
+      if (alertFilter === "active") return !a.ack;
+      return a.level === alertFilter;
+    });
+    document.getElementById("fullAlertList").innerHTML = filtered.map(function (a) { return alertRowHtml(a, true); }).join("") || '<p class="empty-note" style="padding:14px 18px;">No alerts match this filter.</p>';
+  }
+
+  // =========================================================
+  // EVENTS -- delegated clicks
+  // =========================================================
+  document.addEventListener("click", function (e) {
+    var ackBtn = e.target.closest("[data-ack]");
+    if (ackBtn) { ackAlert(ackBtn.getAttribute("data-ack")); return; }
+    var removeBtn = e.target.closest("[data-remove]");
+    if (removeBtn) {
+      var id = removeBtn.getAttribute("data-remove");
+      delete registry[id]; delete telemetry[id]; delete history[id];
+      safeSet(LS.workers, registry);
+      render();
+      return;
+    }
+  });
+
+  document.getElementById("ackBtn").addEventListener("click", function () {
+    var id = document.getElementById("alertBanner").dataset.alertId;
+    if (id) ackAlert(id);
+  });
+
+  document.getElementById("alertFilters").addEventListener("click", function (e) {
+    var chip = e.target.closest(".chip-filter");
+    if (!chip) return;
+    alertFilter = chip.getAttribute("data-filter");
+    Array.prototype.forEach.call(document.querySelectorAll(".chip-filter"), function (c) { c.classList.toggle("active", c === chip); });
+    renderAlertLists();
+  });
+
+  // =========================================================
+  // WORKER REGISTRATION
+  // =========================================================
+  function populateNodeSelect() {
+    var sel = document.getElementById("regNode");
+    sel.innerHTML = Object.keys(nodes).map(function (nid) {
+      return '<option value="' + nid + '">' + nodes[nid].label + " — " + nodes[nid].zone + '</option>';
+    }).join("");
+  }
+  populateNodeSelect();
+
+  document.getElementById("registerForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var id = document.getElementById("regId").value.trim().toUpperCase();
+    var name = document.getElementById("regName").value.trim();
+    var role = document.getElementById("regRole").value.trim();
+    var nodeId = document.getElementById("regNode").value;
+    var toast = document.getElementById("registerToast");
+
+    if (!/^[A-Z0-9_-]{1,7}$/.test(id)) {
+      toast.textContent = "Worker ID must be 1-7 letters/numbers (e.g. W3).";
+      toast.className = "toast show err";
+      return;
+    }
+    if (registry[id]) {
+      toast.textContent = "A worker with ID " + id + " is already registered.";
+      toast.className = "toast show err";
+      return;
+    }
+    registry[id] = { id: id, name: name, role: role, nodeId: nodeId };
+    safeSet(LS.workers, registry);
+    seqCounters[id] = 0;
+    handleIncomingMessage(buildStatus(id));
+    toast.textContent = "Registered " + id + " (" + name + ") on " + nodes[nodeId].label + ".";
+    toast.className = "toast show";
+    this.reset();
+    render();
+  });
+
+  // =========================================================
+  // VITALS & GAS VIEW
+  // =========================================================
+  var GAUGES = [
+    { key: "temperatureC", label: "Temperature", unit: "°C", min: 15, softMax: 45, thresholdKey: "tempHigh" },
+    { key: "airQualityRaw", label: "MQ-135 (air quality)", unit: "raw", min: 0, softMax: 4095, thresholdKey: "mq135High" },
+    { key: "combustibleGasRaw", label: "MQ-4 (combustible gas)", unit: "raw", min: 0, softMax: 4095, thresholdKey: "mq4High" },
+    { key: "heartRateBpm", label: "Heart rate", unit: "bpm", min: 30, softMax: 180, thresholdKey: "hrHigh" },
+    { key: "spo2Pct", label: "SpO2", unit: "%", min: 70, softMax: 100, thresholdKey: "spo2Low", lowIsBad: true },
+    { key: "soilMoisturePct", label: "Soil moisture", unit: "%", min: 0, softMax: 100, thresholdKey: "soilHigh" }
+  ];
+
+  function drawSpark(canvas, values, color) {
+    if (!canvas) return;
+    var ctx = canvas.getContext("2d");
+    var w = canvas.width = canvas.clientWidth * 2;
+    var h = canvas.height = canvas.clientHeight * 2;
+    ctx.clearRect(0, 0, w, h);
+    if (!values || values.length < 2) return;
+    var min = Math.min.apply(null, values), max = Math.max.apply(null, values);
+    if (max === min) { max += 1; min -= 1; }
+    ctx.beginPath();
+    values.forEach(function (v, i) {
+      var x = (i / (values.length - 1)) * w;
+      var y = h - ((v - min) / (max - min)) * (h - 6) - 3;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = color;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+    var lastX = w, lastY = h - ((values[values.length - 1] - min) / (max - min)) * (h - 6) - 3;
+    ctx.beginPath(); ctx.arc(lastX - 3, lastY, 4, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+  }
+
+  function renderVitals() {
+    var body = document.getElementById("vitalsBody");
+    var ids = Object.keys(registry);
+    body.innerHTML = ids.map(function (id) {
+      var reg = registry[id];
+      var msg = telemetry[id];
+      var p = msg ? msg.payload : null;
+      var score = p ? calcRisk(p) : 0;
+      var lvl = riskLevel(score);
+      var gauges = GAUGES.map(function (g) {
+        var value = p ? p[g.key] : null;
+        var t = thresholds[g.thresholdKey];
+        var pct = value == null ? 0 : clamp((value - g.min) / (g.softMax - g.min), 0, 1) * 100;
+        var danger = value == null ? false : (g.lowIsBad ? value <= t : value >= t);
+        return (
+          '<div class="gauge-card">' +
+            '<div class="gauge-top"><span class="gauge-name">' + g.label + '</span>' +
+            '<span class="gauge-reading" style="color:' + (danger ? "var(--critical)" : "var(--navy)") + '">' + (value == null ? "—" : (typeof value === "number" ? value.toFixed(g.unit === "raw" ? 0 : 1) : value)) + ' <span style="font-size:11px;color:var(--ink-muted);">' + g.unit + '</span></span></div>' +
+            '<div class="gauge-band"><div class="gauge-marker" style="left:' + pct + '%"></div></div>' +
+            '<div class="gauge-range"><span>' + g.min + '</span><span>threshold ' + t + '</span><span>' + g.softMax + '</span></div>' +
+          '</div>'
+        );
+      }).join("");
+
+      return (
+        '<div class="panel">' +
+          '<div class="panel-head"><h2>' + id + ' — ' + reg.name + '</h2><span class="count mono">risk ' + score.toFixed(1) + '/10</span></div>' +
+          '<div class="panel-body">' +
+            '<div class="gauge-grid">' + gauges + '</div>' +
+            '<div><div class="metric-label" style="margin-bottom:4px;">Risk trend (last ' + ((history[id] || []).length) + ' readings)</div><canvas class="spark" id="spark-' + id + '"></canvas></div>' +
+          '</div>' +
+        '</div>'
+      );
+    }).join("") || '<p class="empty-note">No workers registered yet.</p>';
+
+    ids.forEach(function (id) {
+      var canvas = document.getElementById("spark-" + id);
+      var lvl = telemetry[id] ? riskLevel(calcRisk(telemetry[id].payload)) : "good";
+      var color = lvl === "critical" ? "#d03b3b" : lvl === "warning" ? "#b45309" : "#0ca30c";
+      drawSpark(canvas, history[id] || [], color);
+    });
+  }
+
+  // =========================================================
+  // MINE MAP -- schematic SVG, wall nodes as diamonds, workers as
+  // dots positioned near their assigned node (deterministic jitter).
+  // =========================================================
+  function mapSvg() {
+    var W = 760, H = 480;
+    var tunnels = [
+      "M40,260 C180,180 320,320 420,260 S620,180 720,240",
+      "M190,250 C220,320 260,380 380,400 S520,420 560,380",
+      "M420,260 C450,140 500,90 600,70"
+    ];
+    var parts = [];
+    parts.push('<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Mine map">');
+    parts.push('<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#0d1720"/>');
+    parts.push('<g stroke="#2a3f52" stroke-width="34" fill="none" stroke-linecap="round">');
+    tunnels.forEach(function (d) { parts.push('<path d="' + d + '"/>'); });
+    parts.push('</g>');
+    parts.push('<g stroke="#3d5670" stroke-width="1" fill="none" stroke-dasharray="2 6" stroke-linecap="round">');
+    tunnels.forEach(function (d) { parts.push('<path d="' + d + '"/>'); });
+    parts.push('</g>');
+
+    // nodes
+    Object.keys(nodes).forEach(function (nid) {
+      var n = nodes[nid];
+      var online = Object.keys(registry).some(function (id) { return registry[id].nodeId === nid && telemetry[id] && (Date.now() - telemetry[id]._receivedAt) < STALE_MS; });
+      var color = online ? "#2a5f8a" : "#8b93a0";
+      parts.push('<g data-node="' + nid + '" style="cursor:pointer;">');
+      parts.push('<rect x="' + (n.x - 12) + '" y="' + (n.y - 12) + '" width="24" height="24" rx="5" transform="rotate(45 ' + n.x + ' ' + n.y + ')" fill="' + color + '" stroke="#fff" stroke-width="1.5"/>');
+      parts.push('<text x="' + n.x + '" y="' + (n.y - 22) + '" fill="#e7edf3" font-size="12" font-family="Roboto Mono, monospace" font-weight="700" text-anchor="middle">' + n.id + '</text>');
+      parts.push('</g>');
+    });
+
+    // workers
+    Object.keys(registry).forEach(function (id) {
+      var reg = registry[id];
+      var node = nodes[reg.nodeId];
+      if (!node) return;
+      var ox = hashOffset(id + "x", 55);
+      var oy = hashOffset(id + "y", 40);
+      var x = node.x + ox, y = node.y + oy;
+      var msg = telemetry[id];
+      var meta = statusMeta(msg);
+      var color = meta.cls === "critical" ? "#e35a5a" : meta.cls === "warning" ? "#d99a4e" : meta.cls === "offline" ? "#8b93a0" : "#3fc93f";
+      parts.push('<g data-worker="' + id + '" style="cursor:pointer;">');
+      if (meta.cls === "critical") parts.push('<circle cx="' + x + '" cy="' + y + '" r="13" fill="' + color + '" opacity="0.35"><animate attributeName="r" values="10;16;10" dur="1.4s" repeatCount="indefinite"/></circle>');
+      parts.push('<circle cx="' + x + '" cy="' + y + '" r="8" fill="' + color + '" stroke="#0d1720" stroke-width="2"/>');
+      parts.push('<text x="' + x + '" y="' + (y + 21) + '" fill="#cfd8e0" font-size="10.5" font-family="Roboto Mono, monospace" text-anchor="middle">' + id + '</text>');
+      parts.push('</g>');
+    });
+
+    parts.push('</svg>');
+    return parts.join("");
+  }
+
+  function wireMapEvents(container) {
+    var tooltip = document.getElementById("mapTooltip");
+    container.querySelectorAll("[data-worker]").forEach(function (g) {
+      g.addEventListener("mouseenter", function (e) { showTooltipWorker(g.getAttribute("data-worker"), e, container); });
+      g.addEventListener("mousemove", function (e) { positionTooltip(e, container); });
+      g.addEventListener("mouseleave", function () { tooltip.hidden = true; });
+      g.addEventListener("click", function (e) { showTooltipWorker(g.getAttribute("data-worker"), e, container); });
+    });
+    container.querySelectorAll("[data-node]").forEach(function (g) {
+      g.addEventListener("mouseenter", function (e) { showTooltipNode(g.getAttribute("data-node"), e, container); });
+      g.addEventListener("mousemove", function (e) { positionTooltip(e, container); });
+      g.addEventListener("mouseleave", function () { tooltip.hidden = true; });
+    });
+  }
+
+  function positionTooltip(e, container) {
+    var tooltip = document.getElementById("mapTooltip");
+    var rect = container.getBoundingClientRect();
+    tooltip.style.left = (e.clientX - rect.left) + "px";
+    tooltip.style.top = (e.clientY - rect.top) + "px";
+  }
+
+  function showTooltipWorker(id, e, container) {
+    var tooltip = document.getElementById("mapTooltip");
+    var reg = registry[id]; var msg = telemetry[id];
+    var meta = statusMeta(msg);
+    var score = msg ? calcRisk(msg.payload) : 0;
+    tooltip.innerHTML = "<strong>" + id + "</strong> — " + reg.name + "<br>" + reg.role + "<br>" +
+      "<span class=\"mono\">" + meta.label + " · risk " + score.toFixed(1) + "/10</span>";
+    tooltip.hidden = false;
+    positionTooltip(e, container);
+  }
+  function showTooltipNode(nid, e, container) {
+    var tooltip = document.getElementById("mapTooltip");
+    var n = nodes[nid];
+    var count = Object.keys(registry).filter(function (id) { return registry[id].nodeId === nid; }).length;
+    tooltip.innerHTML = "<strong>" + n.label + "</strong><br>" + n.zone + "<br><span class=\"mono\">" + count + " worker(s) paired</span>";
+    tooltip.hidden = false;
+    positionTooltip(e, container);
+  }
+
+  function drawMaps() {
+    var svg = mapSvg();
+    var mini = document.getElementById("miniMapWrap");
+    var full = document.getElementById("fullMapWrap");
+    if (mini) { mini.innerHTML = svg; wireMapEvents(mini); }
+    if (full) { full.innerHTML = svg; wireMapEvents(full); }
+  }
+
+  // =========================================================
+  // REPORTS
+  // =========================================================
+  function generateReport() {
+    var ids = Object.keys(registry);
+    var now = new Date();
+    var totalRisk = ids.reduce(function (sum, id) { return sum + (telemetry[id] ? calcRisk(telemetry[id].payload) : 0); }, 0);
+    var avg = ids.length ? totalRisk / ids.length : 0;
+    var activeAlerts = alerts.filter(function (a) { return !a.ack; });
+
+    var workerRows = ids.map(function (id) {
+      var reg = registry[id]; var msg = telemetry[id]; var p = msg ? msg.payload : null;
+      var score = p ? calcRisk(p) : 0;
+      return "<tr><td>" + id + "</td><td>" + reg.name + "</td><td>" + reg.role + "</td><td>" + (nodes[reg.nodeId] ? nodes[reg.nodeId].label : reg.nodeId) +
+        "</td><td>" + score.toFixed(1) + "</td><td>" + (p ? p.temperatureC.toFixed(1) + "°C" : "—") +
+        "</td><td>" + (p ? p.heartRateBpm.toFixed(0) + " / " + p.spo2Pct.toFixed(0) + "%" : "—") +
+        "</td><td>" + (p ? p.airQualityRaw.toFixed(0) + " / " + p.combustibleGasRaw.toFixed(0) : "—") +
+        "</td><td>" + (msg ? relTime(msg._receivedAt) : "never") + "</td></tr>";
+    }).join("");
+
+    var alertRows = alerts.slice(0, 50).map(function (a) {
+      return "<tr><td>" + new Date(a.ts).toLocaleString() + "</td><td>" + a.level.toUpperCase() + "</td><td>" + a.title + "</td><td>" + a.desc + "</td><td>" + (a.ack ? "Acknowledged" : "Active") + "</td></tr>";
+    }).join("");
+
+    var html =
+      '<div class="report-meta">Sensora Underground Safety System</div>' +
+      '<div class="report-title">Master Safety Report</div>' +
+      '<div class="report-meta">Generated ' + now.toLocaleString() + '</div>' +
+      '<h3>Fleet Summary</h3>' +
+      '<div class="table-scroll"><table class="data-table"><tbody>' +
+        '<tr><td>Workers monitored</td><td>' + ids.length + '</td></tr>' +
+        '<tr><td>Wall nodes</td><td>' + Object.keys(nodes).length + '</td></tr>' +
+        '<tr><td>Average fleet risk score</td><td>' + avg.toFixed(1) + ' / 10</td></tr>' +
+        '<tr><td>Active (unacknowledged) alerts</td><td>' + activeAlerts.length + '</td></tr>' +
+        '<tr><td>Total alerts on record</td><td>' + alerts.length + '</td></tr>' +
+      '</tbody></table></div>' +
+      '<h3>Worker Detail</h3>' +
+      '<div class="table-scroll"><table class="data-table"><thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Node</th><th>Risk</th><th>Temp</th><th>HR/SpO2</th><th>MQ135/MQ4</th><th>Last report</th></tr></thead><tbody>' + (workerRows || '<tr><td colspan="9">No workers registered.</td></tr>') + '</tbody></table></div>' +
+      '<h3>Alert History (most recent 50)</h3>' +
+      '<div class="table-scroll"><table class="data-table"><thead><tr><th>Time</th><th>Level</th><th>Title</th><th>Detail</th><th>Status</th></tr></thead><tbody>' + (alertRows || '<tr><td colspan="5">No alerts recorded.</td></tr>') + '</tbody></table></div>';
+
+    document.getElementById("reportSheet").innerHTML = html;
+
+    // plain-text version for clipboard
+    var lines = [];
+    lines.push("SENSORA — MASTER SAFETY REPORT");
+    lines.push("Generated " + now.toLocaleString());
+    lines.push("");
+    lines.push("FLEET SUMMARY");
+    lines.push("Workers monitored: " + ids.length);
+    lines.push("Wall nodes: " + Object.keys(nodes).length);
+    lines.push("Average fleet risk score: " + avg.toFixed(1) + " / 10");
+    lines.push("Active alerts: " + activeAlerts.length + " / " + alerts.length + " total");
+    lines.push("");
+    lines.push("WORKER DETAIL");
+    ids.forEach(function (id) {
+      var reg = registry[id]; var msg = telemetry[id]; var p = msg ? msg.payload : null;
+      lines.push("- " + id + " (" + reg.name + ", " + reg.role + ") @ " + (nodes[reg.nodeId] ? nodes[reg.nodeId].label : reg.nodeId) +
+        " — risk " + (p ? calcRisk(p).toFixed(1) : "0.0") + "/10, last report " + (msg ? relTime(msg._receivedAt) : "never"));
+    });
+    lines.push("");
+    lines.push("ALERT HISTORY (most recent 50)");
+    alerts.slice(0, 50).forEach(function (a) {
+      lines.push("- [" + new Date(a.ts).toLocaleString() + "] " + a.level.toUpperCase() + " — " + a.title + ": " + a.desc + " (" + (a.ack ? "acknowledged" : "active") + ")");
+    });
+    lastReportText = lines.join("\n");
+  }
+
+  document.getElementById("genReportBtn").addEventListener("click", function () {
+    generateReport();
+    var toast = document.getElementById("reportToast");
+    toast.textContent = "Report generated.";
+    toast.className = "toast show";
+    setTimeout(function () { toast.className = "toast"; }, 2500);
+  });
+  document.getElementById("printReportBtn").addEventListener("click", function () {
+    if (!lastReportText) generateReport();
+    window.print();
+  });
+  document.getElementById("copyReportBtn").addEventListener("click", function () {
+    if (!lastReportText) generateReport();
+    var toast = document.getElementById("reportToast");
+    var box = document.getElementById("copyBoxArea");
+    box.value = lastReportText;
+    function done(ok) {
+      toast.textContent = ok ? "Report text copied to clipboard." : "Couldn't auto-copy — text is selected below, press Ctrl/Cmd+C.";
+      toast.className = "toast show" + (ok ? "" : " err");
+      setTimeout(function () { toast.className = "toast"; }, 4000);
+    }
+    try {
+      navigator.clipboard.writeText(lastReportText).then(function () { done(true); }).catch(function () {
+        box.style.display = "block"; box.select(); done(false);
+      });
+    } catch (e) {
+      box.style.display = "block"; box.select(); done(false);
+    }
+  });
+
+  // =========================================================
+  // ADMIN
+  // =========================================================
+  function renderAdmin() {
+    var body = document.getElementById("thresholdSettings");
+    body.innerHTML = THRESHOLD_META.map(function (t) {
+      return (
+        '<div class="settings-row">' +
+          '<div><div class="settings-row-label">' + t.label + '</div></div>' +
+          '<div><input class="num-input" type="number" step="0.1" data-threshold="' + t.key + '" value="' + thresholds[t.key] + '"> ' + t.unit + '</div>' +
+        '</div>'
+      );
+    }).join("");
+
+    var nodeBody = document.getElementById("nodeAdminBody");
+    nodeBody.innerHTML = Object.keys(nodes).map(function (nid) {
+      var n = nodes[nid];
+      var workerCount = Object.keys(registry).filter(function (id) { return registry[id].nodeId === nid; }).length;
+      var online = Object.keys(registry).some(function (id) { return registry[id].nodeId === nid && telemetry[id] && (Date.now() - telemetry[id]._receivedAt) < STALE_MS; });
+      return (
+        '<div class="settings-row">' +
+          '<div><div class="settings-row-label">' + n.label + ' <span class="mono" style="font-weight:400;color:var(--ink-muted);">(' + n.id + ')</span></div>' +
+          '<div class="settings-row-desc">' + n.zone + ' · ' + workerCount + ' worker(s) paired</div></div>' +
+          '<span class="status-pill ' + (online ? "good" : "offline") + '"><span class="dot"></span>' + (online ? "ONLINE" : "NO SIGNAL") + '</span>' +
+        '</div>'
+      );
+    }).join("");
+  }
+
+  document.getElementById("thresholdSettings").addEventListener("change", function (e) {
+    var input = e.target.closest("[data-threshold]");
+    if (!input) return;
+    var key = input.getAttribute("data-threshold");
+    var val = parseFloat(input.value);
+    if (!isNaN(val)) {
+      thresholds[key] = val;
+      safeSet(LS.thresholds, thresholds);
+      var toast = document.getElementById("thresholdToast");
+      toast.textContent = "Threshold updated.";
+      toast.className = "toast show";
+      setTimeout(function () { toast.className = "toast"; }, 2000);
+      render();
+    }
+  });
+  document.getElementById("resetThresholdsBtn").addEventListener("click", function () {
+    thresholds = Object.assign({}, DEFAULT_THRESHOLDS);
+    safeSet(LS.thresholds, thresholds);
+    renderAdmin();
+    render();
+  });
+
+  function updateDataModeFlag() {
+    var flag = document.getElementById("dataModeFlag");
+    if (liveEnabled && simulating) { flag.textContent = "LIVE + SIMULATED"; flag.classList.add("live"); }
+    else if (liveEnabled) { flag.textContent = "LIVE HARDWARE"; flag.classList.add("live"); }
+    else if (simulating) { flag.textContent = "SIMULATED DATA"; flag.classList.remove("live"); }
+    else { flag.textContent = "ALL PAUSED"; flag.classList.remove("live"); }
+  }
+
+  document.getElementById("simToggle").addEventListener("change", function (e) {
+    simulating = e.target.checked;
+    updateDataModeFlag();
+    restartTicker();
+  });
+  document.getElementById("tickInterval").addEventListener("change", function (e) {
+    var v = parseInt(e.target.value, 10);
+    if (v >= 1 && v <= 30) { tickMs = v * 1000; restartTicker(); }
+  });
+  document.getElementById("dataModeFlag").addEventListener("click", function () {
+    var toggle = document.getElementById("simToggle");
+    toggle.checked = !toggle.checked;
+    toggle.dispatchEvent(new Event("change"));
+  });
+
+  document.getElementById("liveToggle").addEventListener("change", function (e) {
+    liveEnabled = e.target.checked;
+    updateDataModeFlag();
+    restartLivePoll();
+    restartTicker(); // re-evaluate which workers the ticker should skip
+  });
+  document.getElementById("liveUrl").addEventListener("change", function (e) {
+    liveUrl = e.target.value.trim() || "http://192.168.4.1";
+    safeSet(LS.liveUrl, liveUrl);
+    if (liveEnabled) restartLivePoll();
+  });
+
+  document.getElementById("resetSystemBtn").addEventListener("click", function () {
+    if (!window.confirm("Reset the entire system? This clears registered workers, alerts, and settings stored in this browser.")) return;
+    try { localStorage.removeItem(LS.workers); localStorage.removeItem(LS.nodes); localStorage.removeItem(LS.thresholds); localStorage.removeItem(LS.tab); localStorage.removeItem(LS.liveUrl); } catch (e) {}
+    location.reload();
+  });
+
+  // =========================================================
+  // SIMULATOR TICKER
+  // =========================================================
+  function restartTicker() {
+    if (tickHandle) clearInterval(tickHandle);
+    if (!simulating) return;
+    tickHandle = setInterval(function () {
+      Object.keys(registry).forEach(function (id) {
+        if (alertedWorker === id) return; // paused while that worker is alerted
+        if (liveEnabled && liveWorkerIds[id]) return; // this one's getting real data from wall_n.ino instead
+        handleIncomingMessage(buildStatus(id));
+      });
+    }, tickMs);
+  }
+
+  // =========================================================
+  // LIVE HARDWARE POLLING -- fetches wall_n.ino's own /api/workers
+  // JSON directly (see wall_n.ino's handleApiWorkers(), which now
+  // sends an Access-Control-Allow-Origin header specifically so this
+  // works) and feeds each worker's latest message through the exact
+  // same handleIncomingMessage() the simulator uses. The response
+  // shape already matches this dashboard's message shape field-for-
+  // field -- no translation needed beyond wrapping it as one message
+  // per workerId and reconstructing an arrival timestamp from ageMs.
+  // =========================================================
+  function setLiveStatus(text, isError) {
+    var el = document.getElementById("liveStatus");
+    el.textContent = text;
+    el.style.color = isError ? "var(--critical)" : "var(--good)";
+  }
+
+  function pollLive() {
+    fetch(liveUrl.replace(/\/$/, "") + "/api/workers")
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (data) {
+        var ids = Object.keys(data);
+        liveWorkerIds = {};
+        ids.forEach(function (id) { liveWorkerIds[id] = true; });
+        ids.forEach(function (id) {
+          var w = data[id];
+          if (!registry[id]) {
+            // Auto-register a worker the wall node is reporting that
+            // hasn't been added on the Workers tab yet, so its card
+            // still renders instead of silently vanishing.
+            registry[id] = { id: id, name: "Unregistered worker", role: "—", nodeId: w.nodeId || Object.keys(nodes)[0] };
+            safeSet(LS.workers, registry);
+          }
+          if (liveSeqSeen[id] === w.seq) return; // no new packet since the last poll
+          liveSeqSeen[id] = w.seq;
+
+          var msg = {
+            schemaVersion: 1,
+            msgType: w.msgType,
+            workerId: w.workerId,
+            nodeId: w.nodeId,
+            seq: w.seq,
+            espnowRssi: w.espnowRssi,
+            timestamp: Date.now() - (w.ageMs || 0),
+            payload: w.payload
+          };
+          msg._receivedAt = Date.now() - (w.ageMs || 0);
+          handleIncomingMessage(msg);
+        });
+        setLiveStatus(ids.length + " worker(s) live · last poll " + new Date().toLocaleTimeString(), false);
+      })
+      .catch(function (err) {
+        setLiveStatus("unreachable (" + err.message + ") — check WiFi + URL", true);
+      });
+  }
+
+  function restartLivePoll() {
+    if (liveHandle) clearInterval(liveHandle);
+    if (!liveEnabled) { liveWorkerIds = {}; setLiveStatus("not connected", false); restartTicker(); return; }
+    setLiveStatus("connecting…", false);
+    pollLive();
+    liveHandle = setInterval(pollLive, 2000);
+  }
+
+  // occasional demo distress so the page never looks static/empty on
+  // first view -- targets W3 (a dummy-only worker), not W2, so it
+  // never masquerades as a real alert once W2 is live from hardware.
+  function seedDemoDistressSoon() {
+    setTimeout(function () {
+      if (!registry.W3 || liveWorkerIds.W3) return;
+      handleIncomingMessage(buildDistress("W3", "COMBUSTIBLE_GAS", "GAS_DANGER", { combustibleGasRaw: 3600 }));
+    }, 9000);
+  }
+
+  // =========================================================
+  // SEED + BOOT
+  // =========================================================
+  function seed() {
+    Object.keys(registry).forEach(function (id) {
+      seqCounters[id] = 0;
+      var steps = [5 * 60000, 3 * 60000, 90000, 0];
+      steps.forEach(function (ago) {
+        var msg = buildStatus(id);
+        var at = Date.now() - ago;
+        msg.timestamp = at; msg._receivedAt = at;
+        eventLog.unshift(msg);
+        telemetry[id] = msg;
+        history[id] = history[id] || [];
+        history[id].push(calcRisk(msg.payload));
+      });
+    });
+    pushAlert("warning", "Worker W4 — gas reading trending toward threshold", "MQ-4 approaching the safe-band ceiling during initial calibration", "W4", "warning");
+    render();
+  }
+
+  function tickClock() { document.getElementById("clock").textContent = new Date().toLocaleTimeString(); }
+  setInterval(tickClock, 1000);
+  tickClock();
+
+  populateNodeSelect();
+  document.getElementById("liveUrl").value = liveUrl;
+  setLiveStatus("not connected", false);
+  updateDataModeFlag();
+  seed();
+  switchTab(activeTab);
+  restartTicker();
+  seedDemoDistressSoon();
+
+  window.addEventListener("resize", function () { if (activeTab === "vitals") renderVitals(); if (activeTab === "map" || activeTab === "overview") drawMaps(); });
+})();
+</script>

@@ -1,4 +1,4 @@
-// Sensora — Wall Node (ESP32), peer-to-peer edition
+// Bleep — Wall Node (ESP32), peer-to-peer edition
 //
 // No router. No mobile hotspot. No internet. This board hosts its
 // OWN WiFi network (a SoftAP) so a laptop can connect to it directly,
@@ -69,6 +69,14 @@ typedef struct __attribute__((packed)) {
   float motionEnergy;
   float secondsSinceMotion;
   float motionEnergyAtTrigger;
+  float temperatureC;
+  float humidityPct;
+  float pressureHPa;
+  float airQualityRaw;
+  float combustibleGasRaw;
+  float heartRateBpm;
+  float spo2Pct;
+  float soilMoisturePct;
   uint32_t seq;
 } WorkerPacket;
 
@@ -96,6 +104,14 @@ struct StoredWorker {
   float motionEnergy;
   float secondsSinceMotion; // doubles as "secondsInactive" for DISTRESS
   float motionEnergyAtTrigger;
+  float temperatureC;
+  float humidityPct;
+  float pressureHPa;
+  float airQualityRaw;
+  float combustibleGasRaw;
+  float heartRateBpm;
+  float spo2Pct;
+  float soilMoisturePct;
   unsigned long receivedAtMs;
 };
 const int MAX_WORKERS = 8;
@@ -139,7 +155,10 @@ void pushEvent(const char* workerId, const char* nodeId, const char* msgType,
 
 void recordMessage(const char* workerId, const char* nodeId, uint8_t msgType, uint32_t seq,
                     bool haveRssi, int rssi, const char* riskState, const char* hazardType,
-                    float motionEnergy, float secondsSinceMotion, float motionEnergyAtTrigger) {
+                    float motionEnergy, float secondsSinceMotion, float motionEnergyAtTrigger,
+                    float temperatureC = 0, float humidityPct = 0, float pressureHPa = 0,
+                    float airQualityRaw = 0, float combustibleGasRaw = 0, float heartRateBpm = 0,
+                    float spo2Pct = 0, float soilMoisturePct = 0) {
   int idx = findOrAllocWorker(workerId);
   StoredWorker& w = workersStore[idx];
   w.used = true;
@@ -155,6 +174,14 @@ void recordMessage(const char* workerId, const char* nodeId, uint8_t msgType, ui
   w.motionEnergy = motionEnergy;
   w.secondsSinceMotion = secondsSinceMotion;
   w.motionEnergyAtTrigger = motionEnergyAtTrigger;
+  w.temperatureC = temperatureC;
+  w.humidityPct = humidityPct;
+  w.pressureHPa = pressureHPa;
+  w.airQualityRaw = airQualityRaw;
+  w.combustibleGasRaw = combustibleGasRaw;
+  w.heartRateBpm = heartRateBpm;
+  w.spo2Pct = spo2Pct;
+  w.soilMoisturePct = soilMoisturePct;
   w.receivedAtMs = millis();
 
   pushEvent(workerId, nodeId, msgTypeStr, riskState, hazardType);
@@ -264,6 +291,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       var timerLabel= secsInactive!=null? (Math.round(secsInactive)+'s / 20s') : '- / 20s';
       var fillPct= secsInactive!=null? Math.min(100, Math.round((secsInactive/20)*100)) : 0;
       var fillColor= alerting ? 'var(--critical)' : 'var(--accent)';
+      var temp= payload.temperatureC!=null ? payload.temperatureC.toFixed(1)+'C' : '-';
+      var gas= payload.airQualityRaw!=null ? payload.airQualityRaw.toFixed(0)+' / '+ (payload.combustibleGasRaw!=null?payload.combustibleGasRaw.toFixed(0):'-') : '-';
+      var vitals= payload.heartRateBpm!=null && payload.heartRateBpm>0 ? payload.heartRateBpm.toFixed(0)+'bpm / '+(payload.spo2Pct!=null?payload.spo2Pct.toFixed(0):'-')+'%' : '-';
+      var soil= payload.soilMoisturePct!=null ? payload.soilMoisturePct.toFixed(0)+'%' : '-';
       var card=document.createElement('div');
       card.className='worker-card'; card.style.opacity= status==='OFFLINE'?'0.7':'1';
       card.innerHTML=
@@ -271,7 +302,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         '<div class="worker-metrics">'+
           '<div><div class="metric-label">Motion Energy</div><div class="mono">'+motion+'</div></div>'+
           '<div><div class="metric-label">RSSI</div><div class="mono">'+rssi+'</div></div>'+
-          '<div><div class="metric-label">Battery</div><div class="mono">-</div></div>'+
+          '<div><div class="metric-label">Temp</div><div class="mono">'+temp+'</div></div>'+
+          '<div><div class="metric-label">Gas (MQ135/MQ4)</div><div class="mono">'+gas+'</div></div>'+
+          '<div><div class="metric-label">HR / SpO2</div><div class="mono">'+vitals+'</div></div>'+
+          '<div><div class="metric-label">Soil Moisture</div><div class="mono">'+soil+'</div></div>'+
           '<div><div class="metric-label">Last Seq</div><div class="mono">'+seq+'</div></div>'+
         '</div>'+
         '<div><div style="display:flex; justify-content:space-between; font-size:10.5px; color:var(--text-muted); margin-bottom:3px;"><span>Inactivity Timer</span><span class="mono">'+timerLabel+'</span></div>'+
@@ -345,7 +379,7 @@ void handleRoot() {
 }
 
 void handleApiWorkers() {
-  DynamicJsonDocument doc(3072);
+  DynamicJsonDocument doc(5120);
   JsonObject root = doc.to<JsonObject>();
   unsigned long now = millis();
   for (int i = 0; i < MAX_WORKERS; i++) {
@@ -365,6 +399,14 @@ void handleApiWorkers() {
     payload["secondsSinceMotion"] = w.secondsSinceMotion;
     payload["secondsInactive"] = w.secondsSinceMotion;
     payload["motionEnergyAtTrigger"] = w.motionEnergyAtTrigger;
+    payload["temperatureC"] = w.temperatureC;
+    payload["humidityPct"] = w.humidityPct;
+    payload["pressureHPa"] = w.pressureHPa;
+    payload["airQualityRaw"] = w.airQualityRaw;
+    payload["combustibleGasRaw"] = w.combustibleGasRaw;
+    payload["heartRateBpm"] = w.heartRateBpm;
+    payload["spo2Pct"] = w.spo2Pct;
+    payload["soilMoisturePct"] = w.soilMoisturePct;
     payload["battery"] = nullptr;
   }
   String out;
@@ -497,7 +539,10 @@ void onDataReceive(const esp_now_recv_info_t* info, const uint8_t* incomingData,
   // server now.
   recordMessage(pkt.workerId, NODE_ID, pkt.msgType, pkt.seq, haveRssi, rssi,
                 pkt.riskState, pkt.hazardType, pkt.motionEnergy,
-                pkt.secondsSinceMotion, pkt.motionEnergyAtTrigger);
+                pkt.secondsSinceMotion, pkt.motionEnergyAtTrigger,
+                pkt.temperatureC, pkt.humidityPct, pkt.pressureHPa,
+                pkt.airQualityRaw, pkt.combustibleGasRaw, pkt.heartRateBpm,
+                pkt.spo2Pct, pkt.soilMoisturePct);
 }
 
 // ---------------------------------------------------------------------

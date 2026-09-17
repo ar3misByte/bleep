@@ -1,8 +1,15 @@
-# Sensora Watch — Dashboard Feature Tracker
+# Bleep — Dashboard Feature Tracker
 
 Live artifact: **Sensora Watch** — https://claude.ai/artifact/MbasRczLbHmSZs2SWE92Aj
 
 This file tracks what the dashboard actually does, feature by feature, matching the "implement on hardware, then wire into dashboard" workflow. Update this doc every time a new feature lands on the dashboard — don't let it drift from the live artifact.
+
+**As of the latest publish, the artifact is a full command dashboard, not just the Feature 1 demo described below.** It now has seven tabbed sections — Overview, Workers, Alerts, Vitals & Gas, Mine Map, Reports, Admin — built for reference against MineGuard/MineGaurd-Pro/IoT-Safety-Monitoring-System's feature sets (worker registration, a 0–10 risk score, an alert history with acknowledge, per-sensor gauge bands against the tinyML thresholds, a schematic mine map with wall-node anchors, a generated master report, and admin-editable alarm thresholds). Everything below this point documents Feature 1/4 specifically (still accurate for the roster-card and hazard-latching behavior it describes) — it hasn't been rewritten section-by-section for the wider dashboard yet. Key points about the new build:
+
+- **Data model** extends the schema below with a worker registry (`id`, `name`, `role`, `nodeId`) and a wall-node registry (`id`, `label`, `zone`, map `x`/`y`), both persisted to `localStorage` as a per-viewer convenience only — this is demo-grade persistence, not a real backend, and does not sync across devices or reach Claude.
+- **Risk score** (0–10, shown fleet-wide as "Average Risk Score" and per-worker) is a dashboard-only indicator computed from proportional excess over each admin-editable threshold, plus inactivity and the tinyML anomaly score — it is not the same thing as the firmware's own latched pass/fail alarm logic, and changing a threshold in Admin never changes what the hardware itself alarms on.
+- **Dummy data**: two demo workers (W1/W2) ship pre-registered against WALL1/WALL2 with a simulated STATUS ticker (default every 3s, editable in Admin) standing in for real ESP-NOW traffic, plus one seeded warning alert and one scripted demo distress ~9s after load so the page never opens looking empty. All of it is clearly a simulation, not real telemetry, and the "SIMULATED DATA" flag in the utility bar is clickable to pause/resume it.
+- **Reports**: "Generate master report" builds a fleet-summary + per-worker + alert-history report in-page; "Print / Save as PDF" uses the browser print dialog (print-only CSS isolates the report sheet) and "Copy report text" uses the clipboard API with a manual-select textarea fallback — there is no file-download button, since the artifact sandbox blocks script-driven downloads.
 
 ---
 
@@ -46,14 +53,30 @@ Not yet on the dashboard. Build checklist scopes this down to a "proximity snaps
 
 Not yet on the dashboard. Once unblocked, expect a small counter tile (workers currently underground) added to the stat-tile row, likely fed by the wall node nearest the entrance rather than a change to the worker-worn payload.
 
+## Feature 4 — Environmental & Vitals Hazard Sensing
+
+**Status: `LIVE` (wired to real ESP32 hardware, same as Feature 1)**
+
+Adds six more sensors to `worker_node.ino`, reusing the exact same latched-alarm pattern as fall detection and the SOS button (`triggerHazardAlert()`, a generalization of what used to be separate `triggerSOS()`/`triggerInactivityAlert()` implementations):
+
+- **DHT11** — temperature & humidity. Sustained temperature ≥ 40°C latches a `HEAT_STRESS` alert.
+- **BMP180** — barometric pressure, shown as a live reading (no alert threshold yet).
+- **MQ-135** — toxic/air-quality gas (raw ADC). Sustained reading ≥ 4000 latches a `GAS_DANGER` / `TOXIC_GAS` alert.
+- **MQ-4** — combustible gas / methane (raw ADC), the most safety-critical reading underground. Sustained reading ≥ 3000 latches `GAS_DANGER` / `COMBUSTIBLE_GAS`.
+- **MAX30102** — heart rate and an approximate SpO2 estimate. Sustained HR ≥ 130 or ≤ 45 bpm, or SpO2 ≤ 90%, each latch their own alert.
+- **Soil moisture** — floor-level water ingress / flooding proxy. Sustained reading ≥ 80% latches `WATER_INGRESS`.
+
+All eight readings ride on every STATUS and DISTRESS packet regardless of which hazard (if any) is active, so the worker roster cards always show live gauges. Thresholds are starting values only — see `TEMP_DANGER_C` and friends near the top of `worker_node.ino`, and tune against real sensor behavior on-site. Every hazard requires `REQUIRED_HAZARD_SAMPLES` (5) consecutive breaching samples before latching, mirroring the existing impact-detection debounce, so a single noisy ADC read can't trigger a false alarm.
+
+On the dashboard, each worker card now shows Temperature, Humidity, Pressure, Gas (MQ-135 / MQ-4), Heart rate / SpO2, and Soil moisture, with the value turned red once it crosses the same threshold the firmware alarms on — a supervisor can see a reading trending toward danger before it actually fires.
+
+Not implemented from the reference projects this was scoped against (no matching hardware on this build): RFID/UWB/LoRa zone tracking, GPS/subsidence physics, an AI chat assistant, or LCD/haptic on-device displays.
+
 ## Other basic features (from the build checklist, not yet on the dashboard)
 
-- SOS button (manual worker-triggered distress)
-- Local buzzer/LED on the worker unit
 - Battery monitoring (schema field already reserved as `null`)
 - Worker heartbeat / liveness beyond the 15s staleness check
 - Wall-node watchdog / reboot detection
-- Basic temp/gas sensing surfaced on the roster card
 - Server-side persistent event log (currently in-memory in the demo Flask server)
 
 ---
